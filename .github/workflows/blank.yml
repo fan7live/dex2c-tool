@@ -1,4 +1,4 @@
-name: Dex2C Specific Api Protection
+name: Dex2C Api Fix
 
 on:
   workflow_dispatch:
@@ -43,12 +43,18 @@ jobs:
         
         echo "=== Target Class: com/fan/live/tv/android/Api ==="
         
-        # الفلتر هنا موجه بدقة للكلاس الذي أرسلته
-        # سيتم تحويل Api.class فقط لضمان نجاح العملية
-        python3 dcc.py -a input.apk -o protected.apk --filter "com/fan/live/tv/android/Api" --exclude "android"
+        # تم حذف --exclude لأنه غير مدعوم
+        # الفلتر الحالي سيقوم بحماية الكلاس Api فقط
+        python3 dcc.py -a input.apk -o protected.apk --filter "com/fan/live/tv/android/Api"
         
         echo "=== Checking Output ==="
-        ls -lh protected.apk || echo "File not found"
+        if [ -f "protected.apk" ]; then
+          ls -lh protected.apk
+        else
+          echo "File not found! Checking build logs..."
+          # عرض ملفات المشروع للمساعدة في معرفة الخطأ إذا حدث
+          find project -name "*.cpp" || echo "No CPP files generated"
+        fi
 
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
