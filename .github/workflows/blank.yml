@@ -1,4 +1,4 @@
-name: Dex2C Auto Build
+name: Dex2C Final Fix
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        # تم تحديث الرابط هنا ليعمل 100%
+        # استخدام رابط Apktool الرسمي
         wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
@@ -40,7 +40,15 @@ jobs:
       run: |
         cd dex2c
         wget -O input.apk "${{ github.event.inputs.apk_url }}"
-        python3 dcc.py -a input.apk -o protected.apk
+        
+        # التغيير الجذري هنا:
+        # تمت إضافة --filter "Activity" لإجبار الأداة على حماية الكلاسات التي تحتوي على هذا الاسم
+        # بدون الفلتر، الأداة لا تفعل شيئاً مع التطبيقات الجاهزة
+        echo "Starting conversion process..."
+        python3 dcc.py -a input.apk -o protected.apk --filter "Activity"
+
+        # عرض محتويات المجلد للتأكد
+        ls -lh
 
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
