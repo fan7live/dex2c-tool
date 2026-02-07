@@ -1,4 +1,4 @@
-name: Dex2C Final Fix
+name: Dex2C Specific Api Protection
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Install System Dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y python3 python3-pip openjdk-11-jdk git wget unzip clang cmake make lib32z1 zipalign apksigner
@@ -25,30 +25,30 @@ jobs:
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
         unzip -q android-ndk-r21e-linux-x86_64.zip
+        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Setup Dex2C Tool
+    - name: Setup Dex2C & Apktool
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        # استخدام رابط Apktool الرسمي
         wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run Processing
+    - name: Run Protection on Api Class
       run: |
         cd dex2c
         wget -O input.apk "${{ github.event.inputs.apk_url }}"
         
-        # التغيير الجذري هنا:
-        # تمت إضافة --filter "Activity" لإجبار الأداة على حماية الكلاسات التي تحتوي على هذا الاسم
-        # بدون الفلتر، الأداة لا تفعل شيئاً مع التطبيقات الجاهزة
-        echo "Starting conversion process..."
-        python3 dcc.py -a input.apk -o protected.apk --filter "Activity"
-
-        # عرض محتويات المجلد للتأكد
-        ls -lh
+        echo "=== Target Class: com/fan/live/tv/android/Api ==="
+        
+        # الفلتر هنا موجه بدقة للكلاس الذي أرسلته
+        # سيتم تحويل Api.class فقط لضمان نجاح العملية
+        python3 dcc.py -a input.apk -o protected.apk --filter "com/fan/live/tv/android/Api" --exclude "android"
+        
+        echo "=== Checking Output ==="
+        ls -lh protected.apk || echo "File not found"
 
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
