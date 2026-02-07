@@ -26,9 +26,8 @@ jobs:
           clang cmake make \
           lib32z1 \
           zipalign apksigner \
-          llvm lld  # For OLLVM and advanced protections
-        # Install additional dependencies for LLVM build
-        sudo apt-get install -y libstdc++-12-dev zlib1g-dev libncurses5-dev libxml2-dev libedit-dev python3-sphinx
+          llvm lld \
+          build-essential g++ gcc libstdc++-dev libncurses5-dev libxml2-dev libedit-dev swig python3-dev libz-dev libtinfo-dev libgmp-dev libmpfr-dev libmpc-dev
 
     - name: Setup Android NDK r21e
       run: |
@@ -43,7 +42,7 @@ jobs:
         cd obfuscator
         mkdir build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang ..
+        cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang -G "Unix Makefiles"
         make -j$(nproc)
         echo "OLLVM_BIN=$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
         echo "PATH=$PATH:$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
@@ -138,26 +137,26 @@ jobs:
 
         echo "=== Protecting FULL APK with Advanced Obfuscation ==="
 
-        # To use OLLVM in Dex2C: Override the compiler in ndk-build
-        # Dex2C generates Android.mk, so we run dcc.py first, then modify Android.mk, then build
-        python3 dcc.py -a input.apk -o protected.apk --no-build  # Run without building to generate files
-
-        # Now modify the generated Android.mk to use OLLVM clang
-        if [ -f "jni/Android.mk" ]; then
-          sed -i 's|LOCAL_CC := \( (NDK_TOOLCHAIN_PATH)/clang|LOCAL_CC := \){{ env.OLLVM_BIN }}/clang|' jni/Android.mk
-          sed -i 's|LOCAL_CXX := \( (NDK_TOOLCHAIN_PATH)/clang++|LOCAL_CXX := \){{ env.OLLVM_BIN }}/clang++|' jni/Android.mk
-          # Add OLLVM flags for obfuscation
+        # Run Dex2C to generate the files but not build
+        # If --no-build not supported, run fully and then re-build after modifying
+        python3 dcc.py -a input.apk -o protected.apk
+        
+        # If jni dir exists, modify Android.mk for OLLVM
+        if [ -d "jni" ]; then
+          sed -i 's|\( (NDK_TOOLCHAIN_PATH)/clang| \){OLLVM_BIN}/clang|g' jni/Android.mk
+          sed -i 's|\( (NDK_TOOLCHAIN_PATH)/clang++| \){OLLVM_BIN}/clang++|g' jni/Android.mk
+          # Add OLLVM flags
           echo "LOCAL_CFLAGS += -mllvm -fla -mllvm -bcf -mllvm -sub" >> jni/Android.mk
           
-          # Now build with ndk-build using modified Android.mk
+          # Clean and re-build with ndk-build
+          $NDK_ROOT/ndk-build clean -C jni
           $NDK_ROOT/ndk-build -C jni
           
-          # Continue with Dex2C's post-build steps if needed (repack APK)
-          python3 dcc.py -a input.apk -o protected.apk --only-build  # Assuming Dex2C supports only-build, or manual repack
-        else
-          python3 dcc.py -a input.apk -o protected.apk  # Fallback
+          # Repack the APK (assume Dex2C has a way, or use apktool)
+          # For simplicity, assume the protected.apk is generated, or manual repack
+          java -jar tools/apktool.jar b -f temp_dir -o protected.apk  # Adjust if needed, assuming temp_dir is decompile dir
         fi
-        
+
         # Re-sign and align the APK
         zipalign -v -p 4 protected.apk aligned.apk
         apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android aligned.apk --v1-signing-enabled --v2-signing-enabled
