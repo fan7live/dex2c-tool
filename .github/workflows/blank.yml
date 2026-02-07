@@ -1,61 +1,70 @@
-name: Dex2C Api Fix
+name: Dex2C Final Local Build
 
 on:
   workflow_dispatch:
-    inputs:
-      apk_url:
-        description: "APK URL"
-        required: true
-        default: "https://fanlive.org/FanLive_V5.1.4.apk"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Code
+    # 1. سحب ملفات المستودع (بما فيها input.apk)
+    - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: Install Dependencies
+    # 2. تثبيت الأدوات
+    - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3 python3-pip openjdk-11-jdk git wget unzip clang cmake make lib32z1 zipalign apksigner
+        sudo apt-get install -y python3 python3-pip openjdk-11-jdk git unzip clang cmake make lib32z1 zipalign apksigner
 
+    # 3. إعداد NDK
     - name: Setup Android NDK
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
         unzip -q android-ndk-r21e-linux-x86_64.zip
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Setup Dex2C & Apktool
+    # 4. تجهيز dex2c
+    - name: Setup Dex2C Tool
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
+        # استخدام رابط ثابت لـ Apktool
         wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        # ربط المسارات
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run Protection on Api Class
+    # 5. تشغيل الحماية على الملف الموجود بالمستودع
+    - name: Run Protection (Local File)
       run: |
+        # التأكد من وجود الملف في المستودع
+        if [ ! -f "input.apk" ]; then
+          echo "::error::File input.apk NOT FOUND in repo root!"
+          exit 1
+        fi
+
+        # نقل الملف لمجلد الأداة
+        cp input.apk dex2c/input.apk
         cd dex2c
-        wget -O input.apk "${{ github.event.inputs.apk_url }}"
         
         echo "=== Target Class: com/fan/live/tv/android/Api ==="
         
-        # تم حذف --exclude لأنه غير مدعوم
-        # الفلتر الحالي سيقوم بحماية الكلاس Api فقط
+        # تنفيذ الحماية
         python3 dcc.py -a input.apk -o protected.apk --filter "com/fan/live/tv/android/Api"
         
-        echo "=== Checking Output ==="
+        # التحقق النهائي
         if [ -f "protected.apk" ]; then
-          ls -lh protected.apk
+             echo "SUCCESS: Build Complete"
+             ls -lh protected.apk
         else
-          echo "File not found! Checking build logs..."
-          # عرض ملفات المشروع للمساعدة في معرفة الخطأ إذا حدث
-          find project -name "*.cpp" || echo "No CPP files generated"
+             echo "::error::Failed to create protected.apk"
+             exit 1
         fi
 
+    # 6. الرفع
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
