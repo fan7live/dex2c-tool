@@ -1,0 +1,49 @@
+name: Dex2C Tool
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_name:
+        description: "اسم ملف APK"
+        required: true
+        default: "input.apk"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Download repo
+      uses: actions/checkout@v4
+
+    - name: Install system tools
+      run: |
+        sudo apt update
+        sudo apt install -y python3 python3-pip openjdk-11-jdk \
+        git wget unzip clang cmake make
+
+    - name: Download Android NDK
+      run: |
+        wget https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip android-ndk-r21e-linux-x86_64.zip
+
+    - name: Setup dex2c
+      run: |
+        git clone https://github.com/codehasan/dex2c.git
+        cd dex2c
+        pip3 install -r requirements.txt
+        mkdir tools
+        wget -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar
+        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
+
+    - name: Run dex2c
+      run: |
+        cp ${{ github.event.inputs.apk_name }} dex2c/input.apk
+        cd dex2c
+        python3 dcc.py -a input.apk -o protected.apk
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: protected-apk
+        path: dex2c/protected.apk
