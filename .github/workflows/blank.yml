@@ -1,4 +1,4 @@
-name: Dex2C Method Filter Fix
+name: Dex2C Protect Api Class
 
 on:
   workflow_dispatch:
@@ -14,9 +14,15 @@ jobs:
     - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y python3 python3-pip openjdk-11-jdk git unzip clang cmake make lib32z1 zipalign apksigner
+        sudo apt-get install -y \
+          python3 python3-pip \
+          openjdk-11-jdk \
+          git unzip \
+          clang cmake make \
+          lib32z1 \
+          zipalign apksigner
 
-    - name: Setup Android NDK
+    - name: Setup Android NDK r21e
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
         unzip -q android-ndk-r21e-linux-x86_64.zip
@@ -28,34 +34,33 @@ jobs:
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        wget -q -O tools/apktool.jar \
+          https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run Protection (Filter by Method Name)
+    - name: Run Dex2C Protection (Api Class)
       run: |
-        # التأكد من وجود ملف APK الذي رفعته أنت
         if [ ! -f "input.apk" ]; then
-          echo "::error::File input.apk NOT FOUND! Please upload it to your repo."
+          echo "::error::input.apk NOT FOUND. Upload your APK to repo root."
           exit 1
         fi
 
         cp input.apk dex2c/input.apk
         cd dex2c
-        
-        echo "=== Target: function 'fetchAndDecryptData' inside Api class ==="
-        
-        # التعديل الحاسم هنا:
-        # بدلاً من مسار الكلاس، نبحث عن اسم الدالة المميزة الموجودة داخله
-        # هذا يضمن العثور عليها 100% بغض النظر عن طريقة كتابة الباكيج (نقاط أو سلاش)
-        python3 dcc.py -a input.apk -o protected.apk --filter "fetchAndDecryptData"
-        
-        echo "=== Result Verification ==="
+
+        echo "=== Protecting Api class ==="
+        echo "Filter: Lcom/fan/live/tv/android/Api;"
+
+        python3 dcc.py -a input.apk -o protected.apk \
+          --filter "Lcom/fan/live/tv/android/Api;"
+
+        echo "=== Verification ==="
         if [ -f "protected.apk" ]; then
-             echo "SUCCESS: Protected APK created!"
-             ls -lh protected.apk
+          echo "SUCCESS: protected.apk created"
+          ls -lh protected.apk
         else
-             echo "::error::FAILURE: Still no file created. Check if input.apk is valid."
-             exit 1
+          echo "::error::FAILED: No protected.apk generated"
+          exit 1
         fi
 
     - name: Upload Protected APK
