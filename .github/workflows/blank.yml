@@ -32,7 +32,8 @@ jobs:
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        wget -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
+        # تم تحديث الرابط هنا ليعمل 100%
+        wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
     - name: Run Processing
