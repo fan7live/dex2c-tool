@@ -2,6 +2,15 @@ name: Dex2C Protect Full APK
 
 on:
   workflow_dispatch:
+    inputs:
+      classes:
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
+        required: true
+        default: 'com/fan/live/tv/android/Api'
+      protect_all:
+        description: 'Protect all classes? (yes/no)'
+        required: false
+        default: 'yes'
 
 jobs:
   build:
@@ -43,10 +52,23 @@ jobs:
       run: |
         cd dex2c
         echo "=== Setting up filter.txt for maximum protection ==="
-        cat << EOF > filter.txt
-        com/fan/live/tv/android/Api;.*
         
-        .*;.*  # حماية الكل الآخر (whitelist عام)
+        # توليد الـ whitelist بناءً على الـ inputs
+        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
+        
+        # إضافة الكلاسات اللي دخلتها
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
+        
+        # لو protect_all = yes، أضف whitelist عام
+        if [ "${{ inputs.protect_all }}" = "yes" ]; then
+          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+        fi
+        
+        # إضافة الـ blacklist الثابت
+        cat << EOF >> filter.txt
         
         # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
         !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
@@ -54,6 +76,7 @@ jobs:
         !android/.*;.*  # استثنِ Android SDK classes
         !java/.*;.*     # استثنِ Java standard classes
         EOF
+        
         echo "Filter setup complete:"
         cat filter.txt
 
