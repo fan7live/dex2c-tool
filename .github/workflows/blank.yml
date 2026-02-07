@@ -1,4 +1,4 @@
-name: Dex2C Protect Api Class
+name: Dex2C Protect Full APK
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: Install System Dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -28,7 +28,7 @@ jobs:
         unzip -q android-ndk-r21e-linux-x86_64.zip
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Setup Dex2C Tool
+    - name: Setup Dex2C
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
@@ -38,21 +38,36 @@ jobs:
           https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run Dex2C Protection (Api Class)
+    - name: Prepare Filter for Full Protection
+      run: |
+        cd dex2c
+        echo "=== Setting up filter.txt for maximum protection ==="
+        cat << EOF > filter.txt
+        com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)
+        
+        .*;.*  # حماية الكل الآخر (whitelist عام)
+        
+        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
+        !.*/<init>\(   # استثنِ constructors
+        !.*/<clinit>\( # استثنِ static initializers
+        !android/.*;.*  # استثنِ Android SDK
+        EOF
+        echo "Filter setup complete:"
+        cat filter.txt
+
+    - name: Run Dex2C on Full APK
       run: |
         if [ ! -f "input.apk" ]; then
-          echo "::error::input.apk NOT FOUND. Upload your APK to repo root."
+          echo "::error::input.apk NOT FOUND"
           exit 1
         fi
 
         cp input.apk dex2c/input.apk
         cd dex2c
 
-        echo "=== Protecting Api class ==="
-        echo "Filter: Lcom/fan/live/tv/android/Api;"
+        echo "=== Protecting FULL APK ==="
 
-        python3 dcc.py -a input.apk -o protected.apk \
-          --filter "Lcom/fan/live/tv/android/Api;"
+        python3 dcc.py -a input.apk -o protected.apk
 
         echo "=== Verification ==="
         if [ -f "protected.apk" ]; then
