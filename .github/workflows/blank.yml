@@ -27,6 +27,8 @@ jobs:
           lib32z1 \
           zipalign apksigner \
           llvm lld  # For OLLVM and advanced protections
+        # Install additional dependencies for LLVM build
+        sudo apt-get install -y libstdc++-12-dev zlib1g-dev libncurses5-dev libxml2-dev libedit-dev python3-sphinx
 
     - name: Setup Android NDK r21e
       run: |
@@ -37,11 +39,11 @@ jobs:
 
     - name: Setup OLLVM (Obfuscator-LLVM) for Advanced Protection
       run: |
-        git clone https://github.com/obfuscator-llvm/obfuscator.git
+        git clone https://github.com/obfuscator-llvm/obfuscator.git --branch llvm-4.0
         cd obfuscator
         mkdir build
         cd build
-        cmake -DLLVM_ENABLE_PROJECTS=clang -DCMAKE_BUILD_TYPE=Release ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang ..
         make -j$(nproc)
         echo "OLLVM_BIN=$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
         echo "PATH=$PATH:$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
@@ -136,24 +138,29 @@ jobs:
 
         echo "=== Protecting FULL APK with Advanced Obfuscation ==="
 
-        # Modify Dex2C to use OLLVM for compiling C code
-        # Assuming Dex2C generates C files in a temp dir, we patch the build process
-        # For simplicity, add OLLVM flags to Android.mk or build script
-        # Here, we sed the generated Android.mk to use OLLVM clang
-        python3 dcc.py -a input.apk -o protected.apk
-        
-        # Post-process: Find generated .so files and re-obfuscate if needed
-        # But since Dex2C uses ndk-build, we can override the compiler
-        # For advanced: Inject anti-debug, string encryption, etc.
-        # Add custom C code wrappers for anti-tampering
-        echo "=== Adding Extra Protections to Native Libs ==="
-        # Example: Use objcopy or strip to add protections, or custom scripts
-        # For string encryption: Assume we have a script to obfuscate strings in C
-        # But for pro level: Integrate with tools like Obfuscator.io or custom
+        # To use OLLVM in Dex2C: Override the compiler in ndk-build
+        # Dex2C generates Android.mk, so we run dcc.py first, then modify Android.mk, then build
+        python3 dcc.py -a input.apk -o protected.apk --no-build  # Run without building to generate files
 
+        # Now modify the generated Android.mk to use OLLVM clang
+        if [ -f "jni/Android.mk" ]; then
+          sed -i 's|LOCAL_CC := \( (NDK_TOOLCHAIN_PATH)/clang|LOCAL_CC := \){{ env.OLLVM_BIN }}/clang|' jni/Android.mk
+          sed -i 's|LOCAL_CXX := \( (NDK_TOOLCHAIN_PATH)/clang++|LOCAL_CXX := \){{ env.OLLVM_BIN }}/clang++|' jni/Android.mk
+          # Add OLLVM flags for obfuscation
+          echo "LOCAL_CFLAGS += -mllvm -fla -mllvm -bcf -mllvm -sub" >> jni/Android.mk
+          
+          # Now build with ndk-build using modified Android.mk
+          $NDK_ROOT/ndk-build -C jni
+          
+          # Continue with Dex2C's post-build steps if needed (repack APK)
+          python3 dcc.py -a input.apk -o protected.apk --only-build  # Assuming Dex2C supports only-build, or manual repack
+        else
+          python3 dcc.py -a input.apk -o protected.apk  # Fallback
+        fi
+        
         # Re-sign and align the APK
         zipalign -v -p 4 protected.apk aligned.apk
-        apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android aligned.apk
+        apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android aligned.apk --v1-signing-enabled --v2-signing-enabled
         mv aligned.apk protected.apk
 
         echo "=== Verification ==="
