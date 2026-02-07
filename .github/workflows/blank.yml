@@ -43,14 +43,15 @@ jobs:
         cd dex2c
         echo "=== Setting up filter.txt for maximum protection ==="
         cat << EOF > filter.txt
-        Lcom/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)
+        com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)
         
         .*;.*  # حماية الكل الآخر (whitelist عام)
         
         # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
-        !.*/<init>   # استثنِ constructors (بدون أقواس، لأن dex2c يتعامل معها كـ regex)
+        !.*/<init>   # استثنِ constructors (بدون أقواس أو وصف)
         !.*/<clinit> # استثنِ static initializers
-        !android/.*;.*  # استثنِ Android SDK
+        !android/.*;.*  # استثنِ Android SDK classes
+        !java/.*;.*     # استثنِ Java standard classes
         EOF
         echo "Filter setup complete:"
         cat filter.txt
