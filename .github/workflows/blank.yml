@@ -1,130 +1,131 @@
-name: Dex2C Solid Build
+name: Dex2C Legacy Stable Build
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Target Classes Path (e.g., com/fan/live/tv/android/Api)'
+        description: 'Target Classes (Path style e.g., com/fan/live/tv/android/Api)'
         required: true
         default: 'com/fan/live/tv/android/Api'
-      protect_all:
-        description: 'Protect Everything? (Not Recommended - keep "no" for stability)'
-        required: false
-        default: 'no'
 
 jobs:
-  native_obfuscation:
-    runs-on: ubuntu-22.04
+  fix_build_legacy:
+    # استخدام نسخة أقدم من أوبنتو لضمان توافق أدوات 32 بت
+    runs-on: ubuntu-20.04
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup Tools & Environment
+    # تهيئة بيئة تدعم معمارية i386 الضرورية للأدوات القديمة
+    - name: Setup 32-bit Architecture & Java 8
       run: |
-        # تثبيت الأساسيات
+        sudo dpkg --add-architecture i386
         sudo apt-get update -qq
-        sudo apt-get install -y -qq python3 python3-pip openjdk-11-jdk git unzip zipalign apksigner build-essential
-        
-        # تثبيت أدوات بايثون اللازمة
-        pip3 install setuptools wheel
+        sudo apt-get install -y --no-install-recommends \
+          libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1 \
+          openjdk-8-jdk python3 python3-pip unzip make cmake build-essential \
+          libgcc1:i386 zlib1g:i386
+          
+    - name: Install Python Dependencies
+      run: pip3 install setuptools wheel
 
-    - name: Setup Android NDK (Fixed Version r16b)
-      # نستخدم NDK r16b لأنه الأكثر توافقاً واستقراراً مع dcc.py لتجنب أخطاء Compiling
+    # تثبيت NDK r16b (الأكثر استقراراً مع dex2c)
+    - name: Setup NDK r16b
       run: |
+        echo "Downloading NDK r16b..."
         wget -q https://dl.google.com/android/repository/android-ndk-r16b-linux-x86_64.zip
         unzip -q android-ndk-r16b-linux-x86_64.zip
         rm android-ndk-r16b-linux-x86_64.zip
+        # تصدير المسارات مباشرة
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r16b" >> $GITHUB_ENV
-        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r16b" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/android-ndk-r16b" >> $GITHUB_PATH
 
-    - name: Install Dex2C
+    - name: Prepare Dex2C Tool
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
         
-        # Apktool Setup
-        wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        # نستخدم Apktool نسخة متوسطة (ليست الأحدث جداً وليست القديمة) لضمان التوافق
+        wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.5.0/apktool_2.5.0.jar
         
-        # Link NDK path in config
+        # تعديل ملف الكونفق وتصحيح المسار يدوياً لضمان قراءته
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r16b|" dcc.cfg
+        
+        # تصحيح إذن التنفيذ للملفات الثنائية
+        chmod +x tools/apktool.jar
 
-    - name: Generate Filter (Safe Mode)
+    - name: Create Clean Filter
       run: |
         cd dex2c
+        # حذف الفلتر القديم إن وجد
         rm -f filter.txt
         
-        echo "=== Creating Filter File ==="
+        echo "=== Creating Simple Filter ==="
+        # إنشاء سطر واحد بسيط ومباشر بدون تعقيدات Regex
+        # مثال: com/fan/live/tv/android/Api
+        echo "${{ inputs.classes }}" > filter.txt
         
-        # 1. إضافة الكلاسات المدخلة يدوياً فقط (بدون Regex معقد)
-        IFS=',' read -ra ADDR <<< "${{ inputs.classes }}"
-        for class in "${ADDR[@]}"; do
-          # التأكد من صحة الصيغة وإضافة الـ pattern
-          echo "$class;.*" >> filter.txt
-          echo "Added target: $class"
-        done
+        # تحويل السطر لصيغة Regex بسيطة يفهمها Dex2C
+        # إضافة ;.* في النهاية فقط
+        sed -i 's|$|;.*|g' filter.txt
         
-        # 2. في حالة اختيار حماية الكل (يضاف بحذر)
-        if [ "${{ inputs.protect_all }}" = "yes" ]; then
-          # بدلاً من .*;.* التي تسبب مشاكل، نحمي حزمة التطبيق الرئيسية فقط
-          # نحاول استخراج اسم الباكيج من المدخل الأول
-          MAIN_PACKAGE=$(echo "${ADDR[0]}" | cut -d'/' -f1-3)
-          if [ ! -z "$MAIN_PACKAGE" ]; then
-             echo "Protecting package scope: $MAIN_PACKAGE"
-             echo "$MAIN_PACKAGE/.*;.*" >> filter.txt
-          else
-             echo ".*;.*" >> filter.txt
-          fi
-        fi
-        
-        echo "=== Final Filter Content ==="
         cat filter.txt
 
-    - name: Run Dex2C (No Blacklist Tricks)
+    - name: Debug Environment
+      run: |
+        echo "Check NDK Build Path:"
+        which ndk-build
+        ndk-build --version
+        java -version
+
+    - name: Run Compilation
       run: |
         if [ ! -f "input.apk" ]; then
-          echo "::error::FILE MISSING: Please upload input.apk"
+          echo "::error::PLEASE UPLOAD input.apk !!!"
           exit 1
         fi
         
         cp input.apk dex2c/input.apk
         cd dex2c
         
-        echo ">>> STARTING COMPILE <<<"
-        # Flags:
-        # -a: input apk
-        # -o: output apk
-        # --filter: filter file
-        # حذفنا --noclean وحذفنا أي فلاتر تعجيزية
+        echo ">>> RUNNING DCC <<<"
+        # --no-build ألغيناها، نريد البناء
+        # نلغي -o ونعتمد على الاسم الافتراضي لتجنب مشاكل المسارات مؤقتاً
         
-        python3 dcc.py -a input.apk -o unsign.apk --filter filter.txt
+        python3 dcc.py -a input.apk --filter filter.txt --host-gradle
+        
+        # ملاحظة: إذا فشل، الأمر سيتوقف وتظهر الأخطاء أعلاه
 
-    - name: Finalize APK (Align & Sign)
+    - name: Locate & Sign Output
       run: |
         cd dex2c
-        if [ ! -f "unsign.apk" ]; then
-           echo "::error::Compilation Failed - Check Logs."
+        # الملف الناتج عادة يكون بنفس اسم المدخل ولكن مع protected
+        if [ -f "input-protected.apk" ]; then
+           mv input-protected.apk final_unsigned.apk
+        elif [ -f "protected.apk" ]; then
+           mv protected.apk final_unsigned.apk
+        else
+           # بحث عن أي apk ناتج
+           find . -name "*protected*.apk" -exec mv {} final_unsigned.apk \;
+        fi
+        
+        if [ ! -f "final_unsigned.apk" ]; then
+           echo "::error::Compilation failed. Listing directory for debug:"
+           ls -la
            exit 1
         fi
 
-        echo ">>> SIGNING APK <<<"
-        
-        # Create minimal keystore
-        keytool -genkeypair -v -keystore final.jks -keyalg RSA -keysize 2048 -validity 10000 \
-          -alias mykey -dname "CN=Admin" -storepass 123456 -keypass 123456
-          
-        # Zipalign
-        zipalign -v -p 4 unsign.apk aligned.apk
-        
-        # Sign (V2)
-        apksigner sign --ks final.jks --ks-pass pass:123456 \
-          --ks-key-alias mykey --key-pass pass:123456 \
-          --out Protected_App.apk aligned.apk
-          
-    - name: Upload Result
+        echo ">>> SIGNING <<<"
+        keytool -genkeypair -v -keystore k.jks -keyalg RSA -keysize 2048 -validity 100 -alias a -dname "CN=Test" -storepass 123456 -keypass 123456
+        zipalign -v -p 4 final_unsigned.apk aligned.apk
+        # apksigner build tools are installed via apt in 20.04
+        apksigner sign --ks k.jks --ks-pass pass:123456 --out output_signed.apk aligned.apk
+
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Protected_APK_Files
-        path: dex2c/Protected_App.apk
+        name: Protected_App
+        path: dex2c/output_signed.apk
