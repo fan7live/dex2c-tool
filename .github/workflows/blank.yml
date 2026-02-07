@@ -1,48 +1,47 @@
-name: Dex2C Tool
+name: Dex2C Auto Build
 
 on:
   workflow_dispatch:
     inputs:
-      apk_name:
-        description: "اسم ملف APK"
+      apk_url:
+        description: "APK URL"
         required: true
-        default: "input.apk"
+        default: "https://fanlive.org/FanLive_V5.1.4.apk"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Download repo
+    - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Install system tools
+    - name: Install System Dependencies
       run: |
-        sudo apt update
-        sudo apt install -y python3 python3-pip openjdk-11-jdk \
-        git wget unzip clang cmake make
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip openjdk-11-jdk git wget unzip clang cmake make lib32z1 zipalign apksigner
 
-    - name: Download Android NDK
+    - name: Setup Android NDK
       run: |
-        wget https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
-        unzip android-ndk-r21e-linux-x86_64.zip
+        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip -q android-ndk-r21e-linux-x86_64.zip
 
-    - name: Setup dex2c
+    - name: Setup Dex2C Tool
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        wget -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar
+        wget -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run dex2c
+    - name: Run Processing
       run: |
-        cp ${{ github.event.inputs.apk_name }} dex2c/input.apk
         cd dex2c
+        wget -O input.apk "${{ github.event.inputs.apk_url }}"
         python3 dcc.py -a input.apk -o protected.apk
 
-    - name: Upload APK
+    - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
         name: protected-apk
