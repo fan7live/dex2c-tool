@@ -40,12 +40,14 @@ jobs:
       run: |
         git clone https://github.com/obfuscator-llvm/obfuscator.git --branch llvm-4.0
         cd obfuscator
+        git clone https://github.com/llvm-mirror/clang.git -b release_40 tools/clang
+        cd ..
         mkdir build
         cd build
-        cmake -S .. -B . -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang -G "Unix Makefiles"
+        cmake -S ../obfuscator -B . -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles"
         make -j$(nproc)
-        echo "OLLVM_BIN=$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
-        echo "PATH=$PATH:$GITHUB_WORKSPACE/obfuscator/build/bin" >> $GITHUB_ENV
+        echo "OLLVM_BIN=$GITHUB_WORKSPACE/build/bin" >> $GITHUB_ENV
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/build/bin" >> $GITHUB_ENV
 
     - name: Setup Dex2C
       run: |
@@ -152,9 +154,8 @@ jobs:
           $NDK_ROOT/ndk-build clean -C jni
           $NDK_ROOT/ndk-build -C jni
           
-          # Repack the APK (assume Dex2C has a way, or use apktool)
-          # For simplicity, assume the protected.apk is generated, or manual repack
-          java -jar tools/apktool.jar b -f temp_dir -o protected.apk  # Adjust if needed, assuming temp_dir is decompile dir
+          # Repack the APK using apktool (assuming Dex2C decompiles to a temp dir, adjust 'out' if needed)
+          java -jar tools/apktool.jar b -f out -o protected.apk  # 'out' might be the decompile dir used by Dex2C, check logs if error
         fi
 
         # Re-sign and align the APK
