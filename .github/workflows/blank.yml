@@ -1,14 +1,14 @@
-name: Dex2C Ultimate Protection
+name: Dex2C Ultimate Protection Fixed
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Target Classes (Path-style: com/myapp/secure/utils)'
+        description: 'Target Classes (Path-style: com/fan/live/tv/android/Api)'
         required: true
         default: 'com/fan/live/tv/android/Api'
       protect_all:
-        description: 'Aggressive Mode? (yes/no) - Use carefully'
+        description: 'Aggressive Mode? (yes/no)'
         required: false
         default: 'yes'
 
@@ -27,7 +27,7 @@ jobs:
         # تثبيت Pyjnius لإدارة التعامل مع Dex
         pip3 install setuptools wheel
 
-    # استخدام نسخة NDK محددة بدقة لضمان توافق التحويل مع Clang Obfuscation
+    # استخدام نسخة NDK محددة بدقة لضمان توافق التحويل
     - name: Setup Optimized Android NDK
       run: |
         echo "Downloading NDK r21e..."
@@ -47,30 +47,27 @@ jobs:
         # تحميل Apktool الأحدث
         wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         
-        # --- السحر هنا: حقن إعدادات التصعيب (Obfuscation Flags) ---
-        # نقوم بتعديل الكونفق لنضيف فلاتر تجعل الهندسة العكسية كابوساً
-        # -Oz: تحسين للحجم (يعقد الكود قليلاً)
-        # -fvisibility=hidden: إخفاء الدوال عن export table (أهم خطوة)
-        # -flto: Link Time Optimization لدمج الملفات ومنع الفصل السهل
+        # ربط مسار NDK بالإعدادات
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
-        
-        # حقن أوامر NDK-BUILD الإضافية مباشرة في الكونفق إذا كانت مدعومة أو تجهيز البيئة
-        # هنا سنعتمد على أن dex2c يستخدم NDK-build، وسنقوم بتعديل التشفير في خطوة التنفيذ
 
     - name: Generate Smart Protection Filter
       run: |
         cd dex2c
         echo "Generating Intelligent Filter..."
         
-        # 1. القائمة البيضاء (الكود الخاص بك)
-        echo "${{ inputs.classes }};.*" > filter.txt
+        # 1. القائمة البيضاء (الكود الخاص بك - أولوية عليا)
+        # تقسيم المدخلات في حال كانت أكثر من كلاس
+        IFS=',' read -ra ADDR <<< "${{ inputs.classes }}"
+        for class in "${ADDR[@]}"; do
+           echo "$class;.*" >> filter.txt
+        done
         
+        # 2. القائمة البيضاء العامة
         if [ "${{ inputs.protect_all }}" = "yes" ]; then
           echo ".*;.*" >> filter.txt
         fi
         
-        # 2. القائمة السوداء الذكية (Safety Net)
-        # هذه القائمة تمنع تحطيم التطبيق وتستثني مكتبات الطرف الثالث
+        # 3. القائمة السوداء الذكية (لحماية التطبيق من الانهيار)
         cat << EOF >> filter.txt
         
         # === BLACKLIST FOR STABILITY ===
@@ -83,16 +80,17 @@ jobs:
         !okhttp3/.*;.*
         !retrofit2/.*;.*
         !io/reactivex/.*;.*
+        !org/json/.*;.*
         
-        # Constructors & Statics (يجب عدم لمسها لتجنب boot loop)
+        # Constructors & Statics
         !.*;<init>\(.*\)
         !.*;<clinit>\(.*\)
         
-        # R Classes (Resources identifiers)
+        # Resources
         !.*;R\$*
         EOF
         
-        echo "Final Filter used:"
+        echo "Final Filter Content:"
         cat filter.txt
 
     - name: Run Dex2C (Native Transformation)
@@ -107,25 +105,20 @@ jobs:
 
         echo ">>> STARTING NATIVE CONVERSION <<<"
         
-        # تمرير متغيرات بيئة لفرض تجريد الرموز (Strip Symbols)
-        export APP_ABI="armeabi-v7a arm64-v8a"
-        export LOCAL_CFLAGS="-fvisibility=hidden -Oz -fstack-protector-strong"
-        export LOCAL_LDFLAGS="-Wl,--gc-sections -Wl,-s"
-        
-        # تشغيل العملية
-        python3 dcc.py -a input.apk -o unsigned_protected.apk --noclean
+        # تشغيل العملية مع تحديد الفلتر وحذف العلم الخطأ
+        python3 dcc.py -a input.apk -o unsigned_protected.apk --filter filter.txt
 
     - name: Anti-Reversing Cleanup (Strip & Sign)
       run: |
         cd dex2c
         if [ ! -f "unsigned_protected.apk" ]; then
-           echo "::error::Protected APK was not generated."
+           echo "::error::Protected APK was not generated. Check logs above."
            exit 1
         fi
 
         echo ">>> PERFORMING FINAL HARDENING & SIGNING <<<"
         
-        # 1. إنشاء مفتاح توقيع جديد عشوائي (يصعب التتبع)
+        # 1. إنشاء مفتاح توقيع جديد عشوائي
         keytool -genkeypair -v -keystore release.jks -keyalg RSA \
           -keysize 2048 -validity 10000 -alias protected \
           -dname "CN=Android Secure, OU=Security, O=Global, L=Unknown, S=Unknown, C=US" \
@@ -134,7 +127,7 @@ jobs:
         # 2. محاذاة التطبيق (Zipalign) للأداء
         zipalign -v -p 4 unsigned_protected.apk aligned.apk
 
-        # 3. توقيع التطبيق (V2 signing Scheme إلزامي للأجهزة الحديثة)
+        # 3. توقيع التطبيق
         apksigner sign --ks release.jks --ks-pass pass:secure123 \
           --ks-key-alias protected --key-pass pass:secure123 \
           --out final_secure.apk aligned.apk
