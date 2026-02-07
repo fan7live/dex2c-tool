@@ -32,7 +32,7 @@ jobs:
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
-        mkdir tools
+        mkdir -p tools
         wget -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
