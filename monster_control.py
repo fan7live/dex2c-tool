@@ -9,8 +9,8 @@ INPUT_APK = "input.apk"
 INTERMEDIATE_APK = "stage1_native.apk"
 FINAL_UNSIGNED = "stage2_obfuscated.apk"
 OUTPUT_APK = "final_protected.apk"
-TOOLS_DIR = "tools"
-# Dex2C & NDK
+
+# Dex2C & NDK Configuration
 DCC_DIR = "dex2c_tool"
 NDK_ROOT = os.environ.get("NDK_ROOT")
 # ==================================================
@@ -18,6 +18,7 @@ NDK_ROOT = os.environ.get("NDK_ROOT")
 def run_cmd(command, error_msg="Error"):
     print(f"\n➤ تشغيل: {command}")
     try:
+        # shell=True يسمح بتشغيل الأوامر المعقدة
         subprocess.check_call(command, shell=True)
         return True
     except subprocess.CalledProcessError:
@@ -25,104 +26,128 @@ def run_cmd(command, error_msg="Error"):
         return False
 
 def stage_1_dex2c():
-    """ المرحلة 1: تحويل الجافا إلى C++ """
-    print("\n" + "="*40)
-    print("🛠️ Stage 1: Native Transformation (Dex2C)")
-    print("="*40)
+    """ المرحلة 1: تحويل الجافا إلى C++ (Dex2C) """
+    print("\n" + "="*50)
+    print("🛠️ Stage 1: Native Transformation (C++)")
+    print("="*50)
 
+    # 1. إحضار ملف السكربت dcc.py
     if not os.path.exists("dcc.py"):
         if os.path.exists(f"{DCC_DIR}/dcc.py"):
             shutil.copy(f"{DCC_DIR}/dcc.py", ".")
-            if os.path.exists(f"{DCC_DIR}/dcc"): shutil.copytree(f"{DCC_DIR}/dcc", "dcc", dirs_exist_ok=True)
+            # نسخ المجلدات المساعدة
+            if os.path.exists(f"{DCC_DIR}/dcc"): 
+                shutil.copytree(f"{DCC_DIR}/dcc", "dcc", dirs_exist_ok=True)
+        else:
+            print("⚠️ dcc.py not found in dex2c_tool dir.")
 
-    # إنشاء فلتر ذكي يحمي حزمة التطبيق ويترك الأندرويد
+    # 2. إنشاء فلتر ذكي (لحماية الحزم المهمة فقط)
+    # ملاحظة: إذا كنت تعرف اسم الباكيج الخاص بك ضعه بدل 'com/.*' ليكون أسرع وأدق
+    # مثال: f.write("com/my/app/.*;.*\n")
     with open("filter.txt", "w") as f:
-        # يمكنك هنا تحديد الحزمة الخاصة بك بدقة للحصول على أفضل نتيجة
-        # مثال: com/example/app/.*
-        f.write("com/.*;.*\n")     
-        f.write("!android/.*;.*\n") 
+        f.write("com/.*;.*\n")           # احمِ الكلاسات الشائعة
+        f.write("!android/.*;.*\n")      # استثناء النظام
         f.write("!androidx/.*;.*\n")
-        f.write("!com/google/.*;.*\n")
-    
-    # استخدام NDK لتجميع المكتبات
+        f.write("!com/google/.*;.*\n")   # استثناء خدمات جوجل
+        f.write("!kotlin/.*;.*\n")       # استثناء كوتلن لتجنب الكراش
+
+    # 3. التشغيل
+    # --skip-synthetic : مهم جداً لتجنب توقف العملية بسبب كلاسات الجافا الداخلية
     cmd = f"python3 dcc.py -a {INPUT_APK} -o {INTERMEDIATE_APK} --ndk {NDK_ROOT} --filter filter.txt --skip-synthetic"
     
-    if run_cmd(cmd, "Native protection skipped/failed") and os.path.exists(INTERMEDIATE_APK):
-        print("✅ Native libraries generated successfully.")
+    success = run_cmd(cmd, "تحذير: Dex2C واجه مشكلة (سيتم تخطي هذه المرحلة).")
+    
+    # التأكد من نجاح العملية
+    if success and os.path.exists(INTERMEDIATE_APK):
+        print("✅ تم تحويل الكود إلى Native بنجاح.")
     else:
-        print("⚠️ Falling back to original APK for obfuscation.")
+        print("⚠️ سيتم استخدام APK الأصلي للمرحلة التالية.")
         shutil.copy(INPUT_APK, INTERMEDIATE_APK)
 
 def stage_2_obfuscapk():
-    """ المرحلة 2: التشفير المعقد Obfuscapk """
-    print("\n" + "="*40)
-    print("🌪️ Stage 2: Advanced Obfuscation")
-    print("="*40)
+    """ المرحلة 2: التشفير المعقد (Obfuscapk) """
+    print("\n" + "="*50)
+    print("🌪️ Stage 2: Advanced Obfuscation & Renaming")
+    print("="*50)
     
-    # اختيار المكونات: حذفنا Reorder/Goto لأنها أحيانًا تسبب أخطاء VerifyError في التطبيقات الكبيرة
-    # لكن أبقينا على الأهم: التشفير والتمويه
-    modules = "ArithmeticBranch CallIndirection ConstStringEncryption FieldRename MethodRename RandomManifest Nop"
+    # قائمة التشويشات النشطة (تم اختيار الأكثر استقراراً وقوة)
+    # ArithmeticBranch: يجعل الأرقام معادلات
+    # CallIndirection: يخفي من ينادي من
+    # ConstStringEncryption: يشفر النصوص
+    # MethodRename: يغير أسماء الدوال
+    obfuscators = "ArithmeticBranch CallIndirection ConstStringEncryption FieldRename MethodRename RandomManifest Nop"
     
     work_dir = "obfuscation_work"
     if os.path.exists(work_dir): shutil.rmtree(work_dir)
 
-    # Obfuscapk يعتمد على الأمر 'apktool' الذي قمنا بإعداده في الـ workflow
+    # تشغيل الأمر (يعتمد على apktool المثبت في النظام بالخطوة السابقة)
     cmd = (
-        f"obfuscapk " # الآن يعمل كأمر مباشر بعد التثبيت
-        f"-o {modules} "
-        f"-w {work_dir} "
-        f"{INTERMEDIATE_APK}"
+        f"obfuscapk "
+        f"-o {obfuscators} " # الموديلات المختارة
+        f"-w {work_dir} "    # مجلد العمل
+        f"{INTERMEDIATE_APK}" # الملف القادم من المرحلة 1
     )
     
-    if run_cmd(cmd, "Obfuscation failed"):
-        # البحث عن الناتج
-        found = False
+    success = run_cmd(cmd, "فشل Obfuscapk في إتمام العملية.")
+    
+    # البحث عن الناتج ونقله
+    found = False
+    if success:
+        # Obfuscapk يضيف _obfuscated للاسم، نبحث عنه
         for f in glob.glob(f"{work_dir}/*_obfuscated.apk"):
+            print(f"✅ Found obfuscated file: {f}")
             shutil.move(f, FINAL_UNSIGNED)
             found = True
             break
         
-        if not found:
-            print("⚠️ Obfuscapk ran but produced no file.")
-            shutil.copy(INTERMEDIATE_APK, FINAL_UNSIGNED)
-    else:
+    if not found:
+        print("⚠️ لم يتم العثور على الملف المشوش، سنستخدم ناتج المرحلة السابقة.")
         shutil.copy(INTERMEDIATE_APK, FINAL_UNSIGNED)
 
 def stage_3_signing():
-    """ المرحلة 3: التوقيع """
-    print("\n" + "="*40)
-    print("✍️ Stage 3: Signing")
-    print("="*40)
+    """ المرحلة 3: التوقيع والإخراج """
+    print("\n" + "="*50)
+    print("✍️ Stage 3: Zipalign & Sign")
+    print("="*50)
 
-    # تحسين الذاكرة
-    run_cmd(f"zipalign -p -f -v 4 {FINAL_UNSIGNED} aligned.apk", "Zipalign failed")
+    # 1. Zipalign (تحسين)
+    run_cmd(f"zipalign -p -f -v 4 {FINAL_UNSIGNED} aligned.apk", "فشل Zipalign")
 
-    # مفتاح توقيع
-    if not os.path.exists("release.keystore"):
-        cmd_key = 'keytool -genkey -v -keystore release.keystore -alias beast -keyalg RSA -keysize 2048 -validity 10000 -storepass password123 -keypass password123 -dname "CN=Beast,O=Protector,C=US"'
+    # 2. KeyStore generation
+    keystore = "secure_key.jks"
+    if not os.path.exists(keystore):
+        cmd_key = (
+            f"keytool -genkey -v -keystore {keystore} "
+            "-alias ghost -keyalg RSA -keysize 2048 "
+            "-validity 10000 -storepass 12345678 -keypass 12345678 "
+            "-dname \"CN=Ghost,O=Privacy,C=US\""
+        )
         run_cmd(cmd_key)
 
-    # توقيع
+    # 3. Signing
     cmd_sign = (
-        f"apksigner sign --ks release.keystore "
-        "--ks-pass pass:password123 --key-pass pass:password123 "
+        f"apksigner sign --ks {keystore} "
+        "--ks-pass pass:12345678 --key-pass pass:12345678 "
         f"--out {OUTPUT_APK} aligned.apk"
     )
     
-    run_cmd(cmd_sign, "Signing failed")
+    run_cmd(cmd_sign, "فشل عملية التوقيع.")
     
+    # تنظيف
     if os.path.exists("aligned.apk"): os.remove("aligned.apk")
 
 def main():
-    print("🚀 Initiating MONSTER PROTOCOL...")
-    stage_1_dex2c()
-    stage_2_obfuscapk()
-    stage_3_signing()
+    print("🚀 بدء بروتوكول الوحش (Protection Protocol Started)...")
+    
+    # تنفيذ المراحل بالترتيب
+    stage_1_dex2c()     # (Strong) يحول إلى C++
+    stage_2_obfuscapk() # (Confusing) يغير المسميات ويشفر
+    stage_3_signing()   # (Finalize) يوقع التطبيق
     
     if os.path.exists(OUTPUT_APK):
-        print(f"\n🎉 SUCCESS: {OUTPUT_APK}")
+        print(f"\n🎉 تمت المهمة بنجاح! الملف جاهز: {OUTPUT_APK}")
     else:
-        print("\n❌ CRITICAL FAILURE.")
+        print("\n❌ حدث خطأ فادح: لم يتم إنشاء الملف النهائي.")
         sys.exit(1)
 
 if __name__ == "__main__":
