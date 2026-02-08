@@ -1,53 +1,51 @@
-name: m3u8 to RTMP - Bein Sports 1 with transparent logo
+name: Pro Relay - Bein Sports 1
 
 on:
   workflow_dispatch:
 
 env:
+  # ضع رابط RTMP الخاص بك هنا
   RTMP_FULL: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
+  # رابط القناة
   M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
-  LOGO_URL: https://image.fanlive.org//upload/bein_sports_1.png
+  # رابط الشعار الجديد
+  LOGO_URL: https://image.fanlive.org//upload/fanliveonly.png
 
 jobs:
-  relay:
+  stream_relay:
     runs-on: ubuntu-latest
-    timeout-minutes: 0
+    timeout-minutes: 350 # تقريباً 6 ساعات
 
     steps:
-      - name: Install FFmpeg (BtbN build)
+      - name: Setup FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y wget tar xz-utils
-          wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz -O ffmpeg.tar.xz
-          tar xf ffmpeg.tar.xz
-          sudo mv ffmpeg-*/bin/ffmpeg /usr/local/bin/ffmpeg
-          sudo mv ffmpeg-*/bin/ffprobe /usr/local/bin/ffprobe
-          sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+          sudo apt-get install -y wget xz-utils
+          # تحميل أحدث نسخة مستقرة وخفيفة
+          wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          tar xf ffmpeg-master-latest-linux64-gpl.tar.xz
+          sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg
+          sudo chmod +x /usr/local/bin/ffmpeg
           rm -rf ffmpeg*
-          ffmpeg -version | head -n 3
 
-      - name: Download logo
+      - name: Fetch Logo
         run: wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
 
-      - name: Start relay with FFmpeg
+      - name: Start Professional Stream
         run: |
-          ffmpeg -loglevel info \
-            -re -stream_loop -1 \
-            -i "${{ env.M3U8_URL }}" \
-            -loop 1 -i /tmp/logo.png \
-            -filter_complex "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[bg];[1:v]scale=1920:1080[logo];[bg][logo]overlay=0:0:shortest=1:enable='between(t,0,inf)',format=yuv420p[v]" \
-            -map "[v]" -map 0:a? \
-            -c:v libx264 -preset veryfast -tune zerolatency -profile:v main -level 4.0 -pix_fmt yuv420p -g 60 -r 30 \
-            -b:v 4000k -maxrate 4000k -bufsize 8000k \
-            -c:a aac -b:a 160k -ar 44100 \
-            -f flv -flvflags no_duration_filesize \
-            -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 15 \
-            -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx \
-            "${{ env.RTMP_FULL }}"
-
-      # -------------------------------
-      # الـ URL كامل في env واحد (من وثائق Kick الرسمية: :443/app + key مباشرة)
-      # ما فيش أي concatenation → ما فيش خطأ interpolation
-      # لو نجح → اللوج رح يظهر "Opening 'rtmps://fa723fc1b171...:443/app/sk_...'"
-      # لو ظهر "Connection refused" أو "Failed to connect" → معناه المفتاح غير صالح حاليًا (reset من Kick dashboard)
-      # -------------------------------
+          # التعديلات الاحترافية:
+          # -preset ultrafast: أسرع أداء ممكن لتقليل الضغط
+          # -c:a copy: نسخ الصوت دون تعديل لتوفير الموارد
+          # scale2ref: يجعل حجم اللوجو يطابق حجم الفيديو الأصلي بالضبط
+          
+          ffmpeg -hide_banner -loglevel error \
+            -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 20 \
+            -thread_queue_size 1024 -i "${{ env.M3U8_URL }}" \
+            -thread_queue_size 1024 -loop 1 -i /tmp/logo.png \
+            -filter_complex "[1:v][0:v]scale2ref=iw:ih[logo][video];[video][logo]overlay=0:0[outv]" \
+            -map "[outv]" -map 0:a \
+            -c:v libx264 -preset ultrafast -tune zerolatency \
+            -maxrate 6000k -bufsize 12000k \
+            -pix_fmt yuv420p -g 50 -r 25 \
+            -c:a copy \
+            -f flv "${{ env.RTMP_FULL }}"
