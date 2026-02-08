@@ -1,131 +1,110 @@
-name: Dex2C Legacy Stable Build
+name: Dex2C Protect Full APK
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Target Classes (Path style e.g., com/fan/live/tv/android/Api)'
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
         required: true
         default: 'com/fan/live/tv/android/Api'
+      protect_all:
+        description: 'Protect all classes? (yes/no)'
+        required: false
+        default: 'yes'
 
 jobs:
-  fix_build_legacy:
-    # استخدام نسخة أقدم من أوبنتو لضمان توافق أدوات 32 بت
-    runs-on: ubuntu-20.04
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Code
+    - name: Checkout Repo
       uses: actions/checkout@v4
 
-    # تهيئة بيئة تدعم معمارية i386 الضرورية للأدوات القديمة
-    - name: Setup 32-bit Architecture & Java 8
+    - name: Install Dependencies
       run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends \
-          libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1 \
-          openjdk-8-jdk python3 python3-pip unzip make cmake build-essential \
-          libgcc1:i386 zlib1g:i386
-          
-    - name: Install Python Dependencies
-      run: pip3 install setuptools wheel
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3 python3-pip \
+          openjdk-11-jdk \
+          git unzip \
+          clang cmake make \
+          lib32z1 \
+          zipalign apksigner
 
-    # تثبيت NDK r16b (الأكثر استقراراً مع dex2c)
-    - name: Setup NDK r16b
+    - name: Setup Android NDK r21e
       run: |
-        echo "Downloading NDK r16b..."
-        wget -q https://dl.google.com/android/repository/android-ndk-r16b-linux-x86_64.zip
-        unzip -q android-ndk-r16b-linux-x86_64.zip
-        rm android-ndk-r16b-linux-x86_64.zip
-        # تصدير المسارات مباشرة
-        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r16b" >> $GITHUB_ENV
-        echo "$GITHUB_WORKSPACE/android-ndk-r16b" >> $GITHUB_PATH
+        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip -q android-ndk-r21e-linux-x86_64.zip
+        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Prepare Dex2C Tool
+    - name: Setup Dex2C
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
-        
-        # نستخدم Apktool نسخة متوسطة (ليست الأحدث جداً وليست القديمة) لضمان التوافق
-        wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.5.0/apktool_2.5.0.jar
-        
-        # تعديل ملف الكونفق وتصحيح المسار يدوياً لضمان قراءته
-        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r16b|" dcc.cfg
-        
-        # تصحيح إذن التنفيذ للملفات الثنائية
-        chmod +x tools/apktool.jar
+        wget -q -O tools/apktool.jar \
+          https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Create Clean Filter
+    - name: Prepare Filter for Full Protection
       run: |
         cd dex2c
-        # حذف الفلتر القديم إن وجد
-        rm -f filter.txt
+        echo "=== Setting up filter.txt for maximum protection ==="
         
-        echo "=== Creating Simple Filter ==="
-        # إنشاء سطر واحد بسيط ومباشر بدون تعقيدات Regex
-        # مثال: com/fan/live/tv/android/Api
-        echo "${{ inputs.classes }}" > filter.txt
+        # توليد الـ whitelist بناءً على الـ inputs
+        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
         
-        # تحويل السطر لصيغة Regex بسيطة يفهمها Dex2C
-        # إضافة ;.* في النهاية فقط
-        sed -i 's|$|;.*|g' filter.txt
+        # إضافة الكلاسات اللي دخلتها
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
         
+        # لو protect_all = yes، أضف whitelist عام
+        if [ "${{ inputs.protect_all }}" = "yes" ]; then
+          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+        fi
+        
+        # إضافة الـ blacklist الثابت
+        cat << EOF >> filter.txt
+        
+        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
+        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
+        !.*;<clinit>\(.*\) # استثنِ static initializers
+        !android/.*;.*  # استثنِ Android SDK classes
+        !java/.*;.*     # استثنِ Java standard classes
+        EOF
+        
+        echo "Filter setup complete:"
         cat filter.txt
 
-    - name: Debug Environment
-      run: |
-        echo "Check NDK Build Path:"
-        which ndk-build
-        ndk-build --version
-        java -version
-
-    - name: Run Compilation
+    - name: Run Dex2C on Full APK
       run: |
         if [ ! -f "input.apk" ]; then
-          echo "::error::PLEASE UPLOAD input.apk !!!"
+          echo "::error::input.apk NOT FOUND"
           exit 1
         fi
-        
+
         cp input.apk dex2c/input.apk
         cd dex2c
-        
-        echo ">>> RUNNING DCC <<<"
-        # --no-build ألغيناها، نريد البناء
-        # نلغي -o ونعتمد على الاسم الافتراضي لتجنب مشاكل المسارات مؤقتاً
-        
-        python3 dcc.py -a input.apk --filter filter.txt --host-gradle
-        
-        # ملاحظة: إذا فشل، الأمر سيتوقف وتظهر الأخطاء أعلاه
 
-    - name: Locate & Sign Output
-      run: |
-        cd dex2c
-        # الملف الناتج عادة يكون بنفس اسم المدخل ولكن مع protected
-        if [ -f "input-protected.apk" ]; then
-           mv input-protected.apk final_unsigned.apk
-        elif [ -f "protected.apk" ]; then
-           mv protected.apk final_unsigned.apk
+        echo "=== Protecting FULL APK ==="
+
+        python3 dcc.py -a input.apk -o protected.apk
+
+        echo "=== Verification ==="
+        if [ -f "protected.apk" ]; then
+          echo "SUCCESS: protected.apk created"
+          ls -lh protected.apk
         else
-           # بحث عن أي apk ناتج
-           find . -name "*protected*.apk" -exec mv {} final_unsigned.apk \;
-        fi
-        
-        if [ ! -f "final_unsigned.apk" ]; then
-           echo "::error::Compilation failed. Listing directory for debug:"
-           ls -la
-           exit 1
+          echo "::error::FAILED: No protected.apk generated"
+          exit 1
         fi
 
-        echo ">>> SIGNING <<<"
-        keytool -genkeypair -v -keystore k.jks -keyalg RSA -keysize 2048 -validity 100 -alias a -dname "CN=Test" -storepass 123456 -keypass 123456
-        zipalign -v -p 4 final_unsigned.apk aligned.apk
-        # apksigner build tools are installed via apt in 20.04
-        apksigner sign --ks k.jks --ks-pass pass:123456 --out output_signed.apk aligned.apk
-
-    - name: Upload Artifact
+    - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
-        name: Protected_App
-        path: dex2c/output_signed.apk
+        name: protected-apk
+        path: dex2c/protected.apk
