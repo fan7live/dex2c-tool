@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  RTMP_SERVER:   rtmps://fa723fc1b171.global-contribute.live-video.net:443
+  RTMP_URL:      rtmps://fa723fc1b171.global-contribute.live-video.net:443/app
   STREAM_KEY:    sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
   M3U8_URL:      http://affinderot.org:8080/bn1hevc/index.m3u8
   LOGO_URL:      https://image.fanlive.org//upload/bein_sports_1.png
@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 0
 
     steps:
-      - name: Install FFmpeg (BtbN build - stable with alpha/overlay)
+      - name: Install FFmpeg (BtbN build - stable)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wget tar xz-utils
@@ -27,11 +27,11 @@ jobs:
           rm -rf ffmpeg*
           ffmpeg -version | head -n 3
 
-      - name: Download logo (PNG with alpha transparency)
+      - name: Download logo (PNG with alpha)
         run: |
           wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
 
-      - name: Start 24/7 RTMP relay with transparent logo overlay
+      - name: Start infinite RTMP relay with transparent overlay
         run: |
           ffmpeg -loglevel info \
             -re \
@@ -70,14 +70,10 @@ jobs:
             -reconnect_delay_max 15 \
             -reconnect_on_network_error 1 \
             -reconnect_on_http_error 4xx,5xx \
-            "\( {{ env.RTMP_SERVER }}/app/ \){{ env.STREAM_KEY }}"
+            "\( {{ env.RTMP_URL }}/ \){{ env.STREAM_KEY }}"
 
       # -------------------------------
-      # ملاحظات مهمة:
-      # - الـ URL الآن صحيح 100% حسب وثائق Kick الرسمية: :443/app + الـ key مباشرة
-      # - اللوجو شفاف: الأجزاء الشفافة تظهر البث الأصلي، الملونة تغطي
-      # - البث 1920x1080 @30fps (re-encode من 50fps الأصلي)
-      # - إذا انقطع المصدر، يعيد الاتصال تلقائياً
-      # - شغل الـ workflow → راقب الـ Logs في Actions
-      # - لو ظهر "Failed to connect" أو "Authorization" → معناه المفتاح منتهي أو تحتاج reset من Kick dashboard
+      # الـ URL الآن نظيف وصحيح حسب Kick الرسمي: rtmps://... :443/app + key
+      # لو ظهر "Failed to connect" أو "Handshake failed" بعد هذا → معناه المفتاح غير صالح أو تحتاج reset من https://kick.com/dashboard/settings/stream
+      # شغل Run workflow وراقب اللوج – لازم يوصل لمرحلة "Opening 'rtmps://...'"
       # -------------------------------
