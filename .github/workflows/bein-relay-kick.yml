@@ -1,4 +1,4 @@
-name: Pro Stream - Bein 1 (Fix Logo Hang)
+name: Ultimate Light Stream (Direct Copy)
 
 on:
   workflow_dispatch:
@@ -6,16 +6,14 @@ on:
 env:
   RTMP_FULL: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
   M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
-  # تم تصحيح الرابط بإزالة الشرطة المائلة المكررة
-  LOGO_URL: https://image.fanlive.org/upload/fanliveonly.png
 
 jobs:
-  stream_relay:
+  copy_stream:
     runs-on: ubuntu-latest
     timeout-minutes: 360 # 6 ساعات
 
     steps:
-      - name: Setup FFmpeg
+      - name: Install FFmpeg
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wget xz-utils
@@ -25,26 +23,15 @@ jobs:
           sudo chmod +x /usr/local/bin/ffmpeg
           rm -rf ffmpeg*
 
-      - name: Fetch Logo (Fix Hang)
+      - name: Start Direct Copy Stream
         run: |
-          # استخدام User-Agent وخيار -4 (IPv4) لمنع التعليق
-          wget --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -4 --no-check-certificate -O /tmp/logo.png "${{ env.LOGO_URL }}"
-
-      - name: Start Professional Stream
-        run: |
-          # المزايا: 
-          # 1. نسخ الصوت (copy) لتخفيف الحمل ومنع التقطيع
-          # 2. اللوجو يتمدد تلقائياً بحجم الفيديو (scale2ref)
-          # 3. بافر (Buffer) عالي لضمان عدم انقطاع البث
+          # الخفة القصوى (1% CPU Load)
+          # -c copy: ينسخ البيانات كما هي تماماً
+          # -bsf:a aac_adtstoasc: ضروري جداً عند نقل الصوت من TS إلى FLV لمنع الاخطاء
           
           ffmpeg -hide_banner -loglevel error \
-            -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 20 \
-            -thread_queue_size 2048 -i "${{ env.M3U8_URL }}" \
-            -thread_queue_size 2048 -loop 1 -i /tmp/logo.png \
-            -filter_complex "[1:v][0:v]scale2ref=iw:ih[logo][video];[video][logo]overlay=0:0[outv]" \
-            -map "[outv]" -map 0:a \
-            -c:v libx264 -preset ultrafast -tune zerolatency \
-            -maxrate 6000k -bufsize 12000k \
-            -pix_fmt yuv420p -g 50 -r 25 \
-            -c:a copy \
+            -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
+            -i "${{ env.M3U8_URL }}" \
+            -c copy \
+            -bsf:a aac_adtstoasc \
             -f flv "${{ env.RTMP_FULL }}"
