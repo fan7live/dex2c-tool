@@ -1,10 +1,10 @@
-name: Dex2C Monster Protection (Stable)
+name: Dex2C Protect APK (FINAL STABLE)
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Classes to protect (comma-separated)'
+        description: 'Enter class name (for reference only, same as old workflow)'
         required: true
         default: 'com/fan/live/tv/android/Api'
 
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout
+    - name: Checkout Repo
       uses: actions/checkout@v4
 
     - name: Install Dependencies
@@ -32,33 +32,16 @@ jobs:
         wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
         unzip -q android-ndk-r21e-linux-x86_64.zip
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Setup Dex2C
+    - name: Setup Dex2C (Stable)
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Prepare Filter
-      run: |
-        cd dex2c
-        echo "Generating filter.txt"
-        echo "" > filter.txt
-
-        echo "${{ inputs.classes }}" | tr ',' '\n' | while read CLASS; do
-          echo "$CLASS;.*" >> filter.txt
-        done
-
-        echo "!android/.*" >> filter.txt
-        echo "!androidx/.*" >> filter.txt
-        echo "!java/.*" >> filter.txt
-        echo "!kotlin/.*" >> filter.txt
-
-        echo "==== FILTER ===="
-        cat filter.txt
-
-    - name: Run Dex2C
+    - name: Run Dex2C (WORKING METHOD)
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
@@ -68,13 +51,15 @@ jobs:
         cp input.apk dex2c/input.apk
         cd dex2c
 
-        python3 dcc.py -a input.apk -o protected.apk --filter filter.txt
+        echo "Running Dex2C (same as old working workflow)..."
+        python3 dcc.py -a input.apk -o protected.apk
 
         if [ ! -f "protected.apk" ]; then
           echo "::error::Dex2C FAILED"
           exit 1
         fi
 
+        echo "Checking for .so files..."
         unzip -l protected.apk | grep '\.so' || (echo "::error::NO .so GENERATED" && exit 1)
 
     - name: Upload Protected APK
