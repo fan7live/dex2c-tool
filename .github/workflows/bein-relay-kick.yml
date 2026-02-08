@@ -1,4 +1,4 @@
-name: 1080p Stream (IPTV/VLC Mode)
+name: 1080p Stream (Android Mode)
 
 on:
   workflow_dispatch:
@@ -35,20 +35,21 @@ jobs:
         id: info
         run: echo "::add-mask::${{ github.event.inputs.stream_key }}"
 
-      - name: Start Stream (VLC Emulation Mode)
+      - name: Start Stream (Android/OkHttp Mode)
         run: |
-          echo "Simulating VLC Media Player..."
+          echo "Simulating Android IPTV App..."
           RTMP_FINAL="${{ env.RTMP_SERVER }}${{ github.event.inputs.stream_key }}"
           
-          # التعديلات الحرجة للإصلاح:
-          # 1. user_agent "VLC/..." : أفضل طريقة لخداع سيرفرات IPTV
-          # 2. -http_persistent 0 : يمنع أخطاء السيرفر (520) بإجبار اتصال جديد لكل طلب
-          # 3. إزالة -headers المعقدة لتجنب خطأ CRLF
+          # المحاولة الأقوى: محاكاة مكتبة اتصال تطبيقات الأندرويد
+          # user_agent "okhttp/3.12.1": هذا المعرف تستخدمه أغلب تطبيقات IPTV
+          # -http_persistent 0: إغلاق الاتصال بعد كل حزمة لتفادي الحظر
+          # -multiple_requests 1: للسماح بإعادة المحاولة
 
           ffmpeg -hide_banner -loglevel warning \
-            -user_agent "VLC/3.0.20 LibVLC/3.0.20" \
+            -user_agent "okhttp/3.12.1" \
             -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
             -http_persistent 0 \
+            -multiple_requests 1 \
             -thread_queue_size 2048 \
             -i "${{ github.event.inputs.stream_source }}" \
             -map 0:v -map 0:a \
