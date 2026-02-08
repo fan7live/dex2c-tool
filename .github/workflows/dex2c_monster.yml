@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: 📥 Checkout
+    - name: Checkout
       uses: actions/checkout@v4
 
-    - name: ⚙️ Install Dependencies
+    - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -27,43 +27,40 @@ jobs:
           lib32z1 \
           zipalign apksigner
 
-    - name: 🧩 Setup Android NDK r21e (Stable)
+    - name: Setup Android NDK r21e
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
         unzip -q android-ndk-r21e-linux-x86_64.zip
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: 🛠️ Setup Dex2C (Stable Fork)
+    - name: Setup Dex2C
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: 🧱 Prepare Filter (CLASS ONLY – SAFE)
+    - name: Prepare Filter (SAFE)
       run: |
         cd dex2c
-        echo "=== Generating filter.txt ==="
+        echo "Generating filter.txt"
         echo "" > filter.txt
 
-        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
-        for CLASS in "${CLASSES[@]}"; do
+        echo "${{ inputs.classes }}" | tr ',' '\n' | while read CLASS; do
           echo "$CLASS;.*" >> filter.txt
         done
 
-        cat << EOF >> filter.txt
-!.*;<init>\(.*\)
-!.*;<clinit>\(.*\)
-!android/.*
-!androidx/.*
-!java/.*
-!kotlin/.*
-EOF
+        echo "!.*;<init>\\(.*\\)" >> filter.txt
+        echo "!.*;<clinit>\\(.*\\)" >> filter.txt
+        echo "!android/.*" >> filter.txt
+        echo "!androidx/.*" >> filter.txt
+        echo "!java/.*" >> filter.txt
+        echo "!kotlin/.*" >> filter.txt
 
-        echo "Filter content:"
+        echo "==== FILTER CONTENT ===="
         cat filter.txt
 
-    - name: ☢️ Run Dex2C
+    - name: Run Dex2C
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
@@ -82,7 +79,7 @@ EOF
 
         unzip -l protected.apk | grep '\.so' || (echo "::error::NO .so GENERATED" && exit 1)
 
-    - name: 📤 Upload Protected APK
+    - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
         name: protected-apk
