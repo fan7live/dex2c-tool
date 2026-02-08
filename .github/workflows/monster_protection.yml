@@ -1,4 +1,4 @@
-name: ☢️ PROJECT MONSTER (Final)
+name: ☢️ PROJECT MONSTER (Final Fix)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java
+      - name: ☕ Setup Java & Python
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -27,14 +27,15 @@ jobs:
         with:
           python-version: '3.10'
 
+      # تثبيت متطلبات النظام الضرورية للتشفير
       - name: ⚙️ Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner build-essential libssl-dev libffi-dev python3-dev
 
       # ======================================================
-      # 1. تجهيز Apktool ليكون أمرًا نظاميًا
-      # (Obfuscapk يحتاج هذا لكي يعمل)
+      # 1. تجهيز Apktool ليكون أمرًا نظاميًا (System-Wide)
+      # هذا ضروري لأن Obfuscapk يحاول استدعاء 'apktool' من الـ Terminal
       # ======================================================
       - name: 🛠️ Setup Apktool System-Wide
         run: |
@@ -42,33 +43,37 @@ jobs:
           # تحميل الجار
           wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
           
-          # خدعة: إنشاء أمر وهمي ليعمل في النظام
+          # خدعة ذكية: إنشاء أمر وهمي ليعمل في النظام
           echo '#!/bin/bash' > apktool_wrapper
           echo 'java -jar '"$GITHUB_WORKSPACE"'/tools/apktool.jar "$@"' >> apktool_wrapper
           chmod +x apktool_wrapper
           sudo mv apktool_wrapper /usr/local/bin/apktool
           
-          # تجربة
+          # التحقق من أن apktool يعمل الآن كأمر مباشر
           apktool -version
 
       # ======================================================
-      # 2. تثبيت Obfuscapk من المصدر (لحل مشكلة PIP)
+      # 2. تثبيت Obfuscapk (التصحيح هنا)
       # ======================================================
-      - name: 🛠️ Install Obfuscapk (Source)
+      - name: 🛠️ Install Obfuscapk (Fixed)
         run: |
           git clone https://github.com/ClaudiuGeorgiu/Obfuscapk.git obfuscapk_src
           cd obfuscapk_src
-          pip install -r requirements.txt
-          python3 setup.py install
+          
+          # هذا هو الأمر المصحح (بدلاً من requirements.txt)
+          # يقوم بقراءة setup.py وتثبيت كل شيء تلقائياً
+          pip install .
 
       # ======================================================
-      # 3. تثبيت Dex2C (المشروع الأصلي القديم لكن فعال)
+      # 3. تثبيت Dex2C (المشروع الأصلي للحماية Native)
       # ======================================================
       - name: 🛠️ Setup NDK & Dex2C
         run: |
-          # Dex2c يحتاج NDK قديم نوعاً ما ليعمل بدون مشاكل تعقيد
+          # Dex2c يعمل بشكل أفضل مع NDK r19c
           wget -q https://dl.google.com/android/repository/android-ndk-r19c-linux-x86_64.zip
           unzip -q android-ndk-r19c-linux-x86_64.zip
+          
+          # تعريف مسار NDK للنظام
           echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c" >> $GITHUB_ENV
           
           # استنساخ dex2c
@@ -86,15 +91,14 @@ jobs:
              exit 1
           fi
 
-          # نستخدم متغير بيئة لتعريف الـ ndk للسكريبت
-          export NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c
-          
-          # نسخ الملفات وبدء التشغيل
+          # نقل input.apk ليكون جاهزًا للسكربت
           cp input.apk monster_control.py
+
+          # تشغيل الكنترول (تأكد أنك قمت برفع كود البايثون المحدث بالأسفل)
           python3 monster_control.py
 
       - name: 📤 Upload Protected Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MONSTER_APP_V2
+          name: MONSTER_APP_FIXED
           path: final_protected.apk
