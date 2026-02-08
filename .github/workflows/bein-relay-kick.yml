@@ -1,4 +1,4 @@
-name: 1080p High Performance Stream (Fix IPTV)
+name: 1080p Stream (IPTV/VLC Mode)
 
 on:
   workflow_dispatch:
@@ -35,20 +35,20 @@ jobs:
         id: info
         run: echo "::add-mask::${{ github.event.inputs.stream_key }}"
 
-      - name: Start Stream (Anti-Ban & Audio Fix)
+      - name: Start Stream (VLC Emulation Mode)
         run: |
-          echo "Processing Stream with Smart Headers..."
+          echo "Simulating VLC Media Player..."
           RTMP_FINAL="${{ env.RTMP_SERVER }}${{ github.event.inputs.stream_key }}"
           
-          # التغييرات لحل المشكلة:
-          # -user_agent: خداع السيرفر بأننا متصفح لفك الحظر
-          # -c:a aac: إعادة تشفير الصوت لضمان قبوله (بدلاً من copy التي تفشل مع IPTV)
-          # -err_detect ignore_err: لتجاهل الأخطاء البسيطة في البث المصدر
-          
+          # التعديلات الحرجة للإصلاح:
+          # 1. user_agent "VLC/..." : أفضل طريقة لخداع سيرفرات IPTV
+          # 2. -http_persistent 0 : يمنع أخطاء السيرفر (520) بإجبار اتصال جديد لكل طلب
+          # 3. إزالة -headers المعقدة لتجنب خطأ CRLF
+
           ffmpeg -hide_banner -loglevel warning \
-            -user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
-            -headers "Referer: https://www.google.com/" \
+            -user_agent "VLC/3.0.20 LibVLC/3.0.20" \
             -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
+            -http_persistent 0 \
             -thread_queue_size 2048 \
             -i "${{ github.event.inputs.stream_source }}" \
             -map 0:v -map 0:a \
