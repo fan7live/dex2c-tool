@@ -1,0 +1,90 @@
+name: ☢️ PROJECT MONSTER (Dex2C + Obfuscapk)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'input.apk'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java & Python
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: ⚙️ Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zipalign apksigner build-essential cmake
+
+      # ======================================================
+      # 1. تجهيز أداة Obfuscapk (الخاصة بالتشويش المعقد)
+      # ======================================================
+      - name: 🛠️ Install Obfuscapk
+        run: |
+          # نستخدم أداة Obfuscapk المفتوحة المصدر القوية
+          pip install obfuscapk
+          # تثبيت المتطلبات الإضافية للجرافيك (أحيانا مطلوبة للكراف)
+          pip install cryptography
+
+      # ======================================================
+      # 2. تجهيز Dex2C & NDK (الخاصة بتحويل Native)
+      # ======================================================
+      - name: 🛠️ Setup NDK & Dex2C
+        run: |
+          # NDK r19c هو الأكثر استقرارًا مع dex2c
+          wget -q https://dl.google.com/android/repository/android-ndk-r19c-linux-x86_64.zip
+          unzip -q android-ndk-r19c-linux-x86_64.zip
+          
+          # استنساخ dex2c
+          git clone https://github.com/amimo/dcc.git dex2c_tool
+          cd dex2c_tool
+          pip install -r requirements.txt
+          
+          # إعداد متغيرات البيئة للخطوة القادمة
+          echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c" >> $GITHUB_ENV
+
+      # ======================================================
+      # 3. تحميل Apktool الأحدث
+      # ======================================================
+      - name: 🛠️ Setup Tools
+        run: |
+          mkdir -p tools
+          wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+
+      # ======================================================
+      # 4. تشغيل المعالج الرئيسي (Python Monster Controller)
+      # ======================================================
+      - name: ☢️ Execute PROTECTION PIPELINE
+        run: |
+          if [ ! -f input.apk ]; then
+             echo "::error::ملف input.apk غير موجود!"
+             exit 1
+          fi
+
+          # نقل الملفات وترتيبها
+          cp input.apk monster_control.py
+          
+          # تشغيل عقل المشروع
+          python3 monster_control.py
+
+      - name: 📤 Upload Final Protected APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MONSTER_PROTECTED_APP
+          path: final_protected.apk
