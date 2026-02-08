@@ -1,4 +1,4 @@
-name: Copy Stream - Diagnostic Mode
+name: Ultimate Bypass Stream (VLC Mimic)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ env:
   M3U8_URL: http://mac12546.cdngold.me/live/7e93f942fd00/a1d06bbaed/544451.m3u8
 
 jobs:
-  copy_stream_test:
+  bypass_stream:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -22,19 +22,16 @@ jobs:
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg
           chmod +x /usr/local/bin/ffmpeg
 
-      - name: Start Copy Stream (With Logs)
+      - name: Start VLC Mimic Stream
         run: |
-          # التغييرات الهامة:
-          # 1. loglevel info: سيظهر لك التفاصيل (سرعة البث، التنسيق، هل بدأ ام لا)
-          # 2. user_agent: للتحايل على حماية سيرفر IPTV
-          # 3. c:v copy + c:a aac: أحياناً الفيديو يقبل النسخ لكن الصوت لا، هذا أضمن إعداد خفيف
+          # 1. انتحال شخصية VLC لتخطي الحماية 458
+          # 2. استخدام -c copy للخفة القصوى
+          # 3. إزالة Headers المعقدة لتفادي خطأ CRLF السابق
           
-          ffmpeg -hide_banner -loglevel info \
-            -user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
-            -headers "Referer: http://mac12546.cdngold.me/" \
+          ffmpeg -hide_banner -loglevel warning \
+            -user_agent "VLC/3.0.18 LibVLC/3.0.18" \
             -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
-            -rw_timeout 15000000 \
             -i "${{ env.M3U8_URL }}" \
-            -c:v copy \
-            -c:a aac -b:a 128k -ar 44100 \
+            -c copy \
+            -bsf:a aac_adtstoasc \
             -f flv "${{ env.RTMP_FULL }}"
