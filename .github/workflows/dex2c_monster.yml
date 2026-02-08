@@ -1,0 +1,89 @@
+name: Dex2C Monster Protection (Stable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      classes:
+        description: 'Classes to protect (comma-separated, ex: com/fan/live/tv/android/Api)'
+        required: true
+        default: 'com/fan/live/tv/android/Api'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: 📥 Checkout
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3 python3-pip \
+          openjdk-11-jdk \
+          git unzip \
+          clang cmake make \
+          lib32z1 \
+          zipalign apksigner
+
+    - name: 🧩 Setup Android NDK r21e (Stable)
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip -q android-ndk-r21e-linux-x86_64.zip
+        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+
+    - name: 🛠️ Setup Dex2C (Stable Fork)
+      run: |
+        git clone https://github.com/codehasan/dex2c.git
+        cd dex2c
+        pip3 install -r requirements.txt
+        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
+
+    - name: 🧱 Prepare Filter (CLASS ONLY – SAFE)
+      run: |
+        cd dex2c
+        echo "=== Generating filter.txt ==="
+        echo "" > filter.txt
+
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
+
+        cat << EOF >> filter.txt
+!.*;<init>\(.*\)
+!.*;<clinit>\(.*\)
+!android/.*
+!androidx/.*
+!java/.*
+!kotlin/.*
+EOF
+
+        echo "Filter content:"
+        cat filter.txt
+
+    - name: ☢️ Run Dex2C
+      run: |
+        if [ ! -f "input.apk" ]; then
+          echo "::error::input.apk NOT FOUND"
+          exit 1
+        fi
+
+        cp input.apk dex2c/input.apk
+        cd dex2c
+
+        python3 dcc.py -a input.apk -o protected.apk --filter filter.txt
+
+        if [ ! -f "protected.apk" ]; then
+          echo "::error::Dex2C FAILED"
+          exit 1
+        fi
+
+        unzip -l protected.apk | grep '\.so' || (echo "::error::NO .so GENERATED" && exit 1)
+
+    - name: 📤 Upload Protected APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: protected-apk
+        path: dex2c/protected.apk
