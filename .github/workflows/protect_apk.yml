@@ -1,20 +1,23 @@
 name: DEX Protector AI
 
 on:
-  workflow_dispatch: # يسمح لك بتشغيل الأداة يدوياً
+  workflow_dispatch: # زر التشغيل اليدوي
   push:
     paths:
-      - 'input.apk' # تعمل تلقائياً إذا رفعت ملف جديد
+      - 'input.apk' # يعمل تلقائياً عند رفع التطبيق
 
 jobs:
   protect-job:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write # صلاحية مهمة لرفع الملف المحمي
+
     steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v3
 
-      - name: ☕ Setup Java (Required for Apktool/Signer)
+      - name: ☕ Setup Java
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
@@ -23,7 +26,7 @@ jobs:
       - name: 🐍 Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.10'
 
       - name: ⚙️ Install System Dependencies
         run: |
@@ -33,23 +36,35 @@ jobs:
       - name: 🛠️ Setup Tools Environment
         run: |
           mkdir -p tools
-          # تحميل Apktool (النسخة المستقرة)
-          wget -q -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
-          # تأكد من وجود ملف بايثون
-          if [ ! -f builder.py ]; then
-            echo "builder.py not found! Ensure you pushed the python code."
-            exit 1
+          
+          # الرابط الجديد المباشر (المشكلة كانت هنا وتم حلها)
+          echo "⬇️ Downloading Apktool..."
+          wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+          
+          # فحص إذا التحميل نجح
+          if [ ! -s tools/apktool.jar ]; then
+             echo "❌ Error: Apktool download failed!"
+             exit 1
           fi
+
+          echo "✅ Tools setup completed."
 
       - name: 🛡️ Run Protection Tool
         run: |
-          # تأكد من وجود input.apk
-          if [ ! -f input.apk ]; then
-            echo "::error::ملف input.apk غير موجود!"
+          # تأكد أنك رفعت كود بايثون
+          if [ ! -f builder.py ]; then
+            echo "❌ Error: builder.py not found!"
+            ls -la
             exit 1
           fi
           
-          # تشغيل سكريبت الحماية الذي كتبناه
+          # تأكد أنك رفعت التطبيق
+          if [ ! -f input.apk ]; then
+            echo "❌ Error: input.apk not found!"
+            exit 1
+          fi
+          
+          # تشغيل السكريبت
           python3 builder.py
 
       - name: 📤 Upload Protected APK
