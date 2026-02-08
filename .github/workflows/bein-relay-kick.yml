@@ -5,7 +5,7 @@ on:
 
 env:
   RTMP_FULL: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
-  M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
+  M3U8_URL: http://mac12546.cdngold.me/live/7e93f942fd00/a1d06bbaed/544451.m3u8
 
 jobs:
   copy_stream:
