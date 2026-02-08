@@ -1,0 +1,83 @@
+name: m3u8 to RTMP - Bein Sports 1 with transparent logo overlay
+
+on:
+  workflow_dispatch:
+
+env:
+  RTMP_SERVER:   rtmps://fa723fc1b171.global-contribute.live-video.net
+  STREAM_KEY:    sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
+  M3U8_URL:      http://affinderot.org:8080/bn1hevc/index.m3u8
+  LOGO_URL:      https://image.fanlive.org//upload/bein_sports_1.png
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0
+
+    steps:
+      - name: Install FFmpeg (BtbN build - stable with alpha/overlay)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget tar xz-utils
+          wget https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz -O ffmpeg.tar.xz
+          tar xf ffmpeg.tar.xz
+          sudo mv ffmpeg-*/bin/ffmpeg /usr/local/bin/ffmpeg
+          sudo mv ffmpeg-*/bin/ffprobe /usr/local/bin/ffprobe
+          sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+          rm -rf ffmpeg*
+          ffmpeg -version | head -n 3
+
+      - name: Download logo (PNG with alpha transparency)
+        run: |
+          wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
+
+      - name: Start 24/7 RTMP relay with transparent logo overlay
+        run: |
+          ffmpeg -loglevel info \
+            -re \
+            -stream_loop -1 \
+            -i "${{ env.M3U8_URL }}" \
+            -loop 1 -i /tmp/logo.png \
+            -filter_complex "
+              [0:v]scale=1920:1080:force_original_aspect_ratio=decrease,
+                   pad=1920:1080:(ow-iw)/2:(oh-ih)/2,
+                   setsar=1,
+                   format=yuv420p[bg];
+              [1:v]scale=1920:1080[logo];
+              [bg][logo]overlay=0:0:shortest=1:enable='between(t,0,inf)',
+                         format=yuv420p[v]
+            " \
+            -map "[v]" \
+            -map 0:a? \
+            -c:v libx264 \
+            -preset veryfast \
+            -tune zerolatency \
+            -profile:v main \
+            -level 4.0 \
+            -pix_fmt yuv420p \
+            -g 60 \
+            -r 30 \
+            -b:v 4000k \
+            -maxrate 4000k \
+            -bufsize 8000k \
+            -c:a aac \
+            -b:a 160k \
+            -ar 44100 \
+            -f flv \
+            -flvflags no_duration_filesize \
+            -reconnect 1 \
+            -reconnect_streamed 1 \
+            -reconnect_delay_max 15 \
+            -reconnect_on_network_error 1 \
+            -reconnect_on_http_error 4xx,5xx \
+            "\( {{ env.RTMP_SERVER }}/app/ \){{ env.STREAM_KEY }}"
+
+      # -------------------------------
+      # ملاحظات مهمة:
+      # - اللوجو يُكبّر لـ 1920x1080 ويُوضع overlay مع احترام الشفافية (alpha).
+      # - الأجزاء الشفافة في اللوجو → تظهر الفيديو الأصلي من خلالها.
+      # - الأجزاء غير الشفافة → تغطي الفيديو.
+      # - إذا انقطع الـ m3u8، يحاول FFmpeg إعادة الاتصال تلقائيًا.
+      # - البث يستمر إلى الأبد حتى تضغط Cancel workflow يدويًا.
+      # - إذا ظهر أي خطأ، شغّل الـ workflow مرة أخرى وراقب Logs → Actions tab.
+      # -------------------------------
