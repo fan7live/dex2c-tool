@@ -1,4 +1,4 @@
-name: ☢️ PROJECT MONSTER (Dex2C + Obfuscapk)
+name: ☢️ PROJECT MONSTER (Final)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java & Python
+      - name: ☕ Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -30,45 +30,54 @@ jobs:
       - name: ⚙️ Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y zipalign apksigner build-essential cmake
+          sudo apt-get install -y zipalign apksigner build-essential libssl-dev libffi-dev python3-dev
 
       # ======================================================
-      # 1. تجهيز أداة Obfuscapk (الخاصة بالتشويش المعقد)
+      # 1. تجهيز Apktool ليكون أمرًا نظاميًا
+      # (Obfuscapk يحتاج هذا لكي يعمل)
       # ======================================================
-      - name: 🛠️ Install Obfuscapk
+      - name: 🛠️ Setup Apktool System-Wide
         run: |
-          # نستخدم أداة Obfuscapk المفتوحة المصدر القوية
-          pip install obfuscapk
-          # تثبيت المتطلبات الإضافية للجرافيك (أحيانا مطلوبة للكراف)
-          pip install cryptography
+          mkdir -p tools
+          # تحميل الجار
+          wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+          
+          # خدعة: إنشاء أمر وهمي ليعمل في النظام
+          echo '#!/bin/bash' > apktool_wrapper
+          echo 'java -jar '"$GITHUB_WORKSPACE"'/tools/apktool.jar "$@"' >> apktool_wrapper
+          chmod +x apktool_wrapper
+          sudo mv apktool_wrapper /usr/local/bin/apktool
+          
+          # تجربة
+          apktool -version
 
       # ======================================================
-      # 2. تجهيز Dex2C & NDK (الخاصة بتحويل Native)
+      # 2. تثبيت Obfuscapk من المصدر (لحل مشكلة PIP)
+      # ======================================================
+      - name: 🛠️ Install Obfuscapk (Source)
+        run: |
+          git clone https://github.com/ClaudiuGeorgiu/Obfuscapk.git obfuscapk_src
+          cd obfuscapk_src
+          pip install -r requirements.txt
+          python3 setup.py install
+
+      # ======================================================
+      # 3. تثبيت Dex2C (المشروع الأصلي القديم لكن فعال)
       # ======================================================
       - name: 🛠️ Setup NDK & Dex2C
         run: |
-          # NDK r19c هو الأكثر استقرارًا مع dex2c
+          # Dex2c يحتاج NDK قديم نوعاً ما ليعمل بدون مشاكل تعقيد
           wget -q https://dl.google.com/android/repository/android-ndk-r19c-linux-x86_64.zip
           unzip -q android-ndk-r19c-linux-x86_64.zip
+          echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c" >> $GITHUB_ENV
           
           # استنساخ dex2c
           git clone https://github.com/amimo/dcc.git dex2c_tool
           cd dex2c_tool
           pip install -r requirements.txt
-          
-          # إعداد متغيرات البيئة للخطوة القادمة
-          echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c" >> $GITHUB_ENV
 
       # ======================================================
-      # 3. تحميل Apktool الأحدث
-      # ======================================================
-      - name: 🛠️ Setup Tools
-        run: |
-          mkdir -p tools
-          wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
-
-      # ======================================================
-      # 4. تشغيل المعالج الرئيسي (Python Monster Controller)
+      # 4. تشغيل وحش الحماية
       # ======================================================
       - name: ☢️ Execute PROTECTION PIPELINE
         run: |
@@ -77,14 +86,15 @@ jobs:
              exit 1
           fi
 
-          # نقل الملفات وترتيبها
-          cp input.apk monster_control.py
+          # نستخدم متغير بيئة لتعريف الـ ndk للسكريبت
+          export NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c
           
-          # تشغيل عقل المشروع
+          # نسخ الملفات وبدء التشغيل
+          cp input.apk monster_control.py
           python3 monster_control.py
 
-      - name: 📤 Upload Final Protected APK
+      - name: 📤 Upload Protected Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MONSTER_PROTECTED_APP
+          name: MONSTER_APP_V2
           path: final_protected.apk
