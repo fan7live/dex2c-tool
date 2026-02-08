@@ -1,13 +1,13 @@
-name: m3u8 to RTMP - Bein Sports 1 with transparent logo overlay
+name: m3u8 to RTMP - Bein Sports 1 with transparent logo
 
 on:
   workflow_dispatch:
 
 env:
-  RTMP_URL:      rtmps://fa723fc1b171.global-contribute.live-video.net:443/app
-  STREAM_KEY:    sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
-  M3U8_URL:      http://affinderot.org:8080/bn1hevc/index.m3u8
-  LOGO_URL:      https://image.fanlive.org//upload/bein_sports_1.png
+  RTMP_BASE: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app
+  STREAM_KEY: sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
+  M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
+  LOGO_URL: https://image.fanlive.org//upload/bein_sports_1.png
 
 jobs:
   relay:
@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 0
 
     steps:
-      - name: Install FFmpeg (BtbN build - stable)
+      - name: Install FFmpeg stable build
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wget tar xz-utils
@@ -27,53 +27,27 @@ jobs:
           rm -rf ffmpeg*
           ffmpeg -version | head -n 3
 
-      - name: Download logo (PNG with alpha)
-        run: |
-          wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
+      - name: Download logo PNG with alpha
+        run: wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
 
-      - name: Start infinite RTMP relay with transparent overlay
+      - name: Run FFmpeg relay
         run: |
           ffmpeg -loglevel info \
-            -re \
-            -stream_loop -1 \
+            -re -stream_loop -1 \
             -i "${{ env.M3U8_URL }}" \
             -loop 1 -i /tmp/logo.png \
-            -filter_complex "
-              [0:v]scale=1920:1080:force_original_aspect_ratio=decrease,
-                   pad=1920:1080:(ow-iw)/2:(oh-ih)/2,
-                   setsar=1,
-                   format=yuv420p[bg];
-              [1:v]scale=1920:1080[logo];
-              [bg][logo]overlay=0:0:shortest=1:enable='between(t,0,inf)',
-                         format=yuv420p[v]
-            " \
-            -map "[v]" \
-            -map 0:a? \
-            -c:v libx264 \
-            -preset veryfast \
-            -tune zerolatency \
-            -profile:v main \
-            -level 4.0 \
-            -pix_fmt yuv420p \
-            -g 60 \
-            -r 30 \
-            -b:v 4000k \
-            -maxrate 4000k \
-            -bufsize 8000k \
-            -c:a aac \
-            -b:a 160k \
-            -ar 44100 \
-            -f flv \
-            -flvflags no_duration_filesize \
-            -reconnect 1 \
-            -reconnect_streamed 1 \
-            -reconnect_delay_max 15 \
-            -reconnect_on_network_error 1 \
-            -reconnect_on_http_error 4xx,5xx \
-            "\( {{ env.RTMP_URL }}/ \){{ env.STREAM_KEY }}"
+            -filter_complex "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[bg];[1:v]scale=1920:1080[logo];[bg][logo]overlay=0:0:shortest=1:enable='between(t,0,inf)',format=yuv420p[v]" \
+            -map "[v]" -map 0:a? \
+            -c:v libx264 -preset veryfast -tune zerolatency -profile:v main -level 4.0 -pix_fmt yuv420p -g 60 -r 30 \
+            -b:v 4000k -maxrate 4000k -bufsize 8000k \
+            -c:a aac -b:a 160k -ar 44100 \
+            -f flv -flvflags no_duration_filesize \
+            -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 15 \
+            -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx \
+            "\( {{ env.RTMP_BASE }}/ \){{ env.STREAM_KEY }}"
 
       # -------------------------------
-      # الـ URL الآن نظيف وصحيح حسب Kick الرسمي: rtmps://... :443/app + key
-      # لو ظهر "Failed to connect" أو "Handshake failed" بعد هذا → معناه المفتاح غير صالح أو تحتاج reset من https://kick.com/dashboard/settings/stream
-      # شغل Run workflow وراقب اللوج – لازم يوصل لمرحلة "Opening 'rtmps://...'"
+      # الـ URL الآن مكتوب بشكل نظيف تمامًا بدون مسافات زائدة أو أقواس
+      # المتوقع في اللوج: Opening 'rtmps://fa723fc1b171.../app/sk_us-west-2_...'
+      # لو ظهر "No such file" تاني → معناه مشكلة في GitHub Actions parsing → جرب تضيف الـ URL كامل في الـ env كـ RTMP_FULL_URL
       # -------------------------------
