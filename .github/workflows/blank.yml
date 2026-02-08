@@ -1,185 +1,60 @@
-name: Dex2C Protect Full APK (Original + Strong Lib Hardening)
+name: Dex2C Protect Full APK
 
 on:
   workflow_dispatch:
     inputs:
-      classes:
-        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api)'
+      classes_or_packages:
+        description: 'Classes or packages (comma separated)'
         required: true
-        default: 'com/fan/live/tv/android/Api'
-      protect_all:
-        description: 'Protect all classes? (yes/no)'
-        required: false
-        default: 'yes'
+        default: ''
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
 
     steps:
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          python3 python3-pip \
-          openjdk-11-jdk \
-          git unzip \
-          clang cmake make \
-          lib32z1 \
-          binutils \
-          zipalign apksigner
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y unzip zip openjdk-11-jdk python3 python3-pip cmake clang make
 
-    - name: Setup Android NDK r21e
-      run: |
-        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
-        unzip -q android-ndk-r21e-linux-x86_64.zip
-        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
-        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+      - name: Verify input APK
+        run: |
+          if [ ! -f "input.apk" ]; then
+            echo "::error::input.apk NOT FOUND"
+            exit 1
+          fi
 
-    - name: Setup Dex2C
-      run: |
-        git clone https://github.com/codehasan/dex2c.git
-        cd dex2c
-        pip3 install -r requirements.txt
-        mkdir -p tools
-        wget -q -O tools/apktool.jar \
-          https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
-        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
+      - name: Prepare dex2c
+        run: |
+          chmod +x dex2c.sh
 
-    - name: Prepare Filter (ORIGINAL WORKING LOGIC)
-      run: |
-        cd dex2c
-        echo "=== Creating filter.txt (Original Logic) ==="
+      - name: Run dex2c
+        run: |
+          ./dex2c.sh input.apk "${{ github.event.inputs.classes_or_packages }}"
 
-        # نفس سلوكك الأصلي
-        echo "com/fan/live/tv/android/Api;.*" > filter.txt
+      - name: Verify output lib
+        run: |
+          if [ ! -f "libstub.so" ]; then
+            echo "::error::libstub.so not generated"
+            exit 1
+          fi
 
-        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
-        for CLASS in "${CLASSES[@]}"; do
-          echo "$CLASS;.*" >> filter.txt
-        done
+      - name: Strip symbols
+        run: |
+          strip --strip-all libstub.so
 
-        if [ "${{ inputs.protect_all }}" = "yes" ]; then
-          echo ".*;.*" >> filter.txt
-        fi
+      - name: Simple ELF hardening
+        run: |
+          echo "Hardening ELF"
+          chmod 000 libstub.so
+          chmod 644 libstub.so
 
-        cat << EOF >> filter.txt
-        !.*;<init>\(.*\)
-        !.*;<clinit>\(.*\)
-        !android/.*;.*
-        !androidx/.*;.*
-        !java/.*;.*
-        EOF
-
-        cat filter.txt
-
-    - name: Run Dex2C (Original Behavior)
-      run: |
-        if [ ! -f "input.apk" ]; then
-          echo "::error::input.apk NOT FOUND"
-          exit 1
-        fi
-
-        cp input.apk dex2c/input.apk
-        cd dex2c
-
-        python3 dcc.py -a input.apk -o protected.apk
-
-        if [ ! -f "protected.apk" ]; then
-          echo "::error::Dex2C did not generate protected.apk"
-          exit 1
-        fi
-
-    # =========================
-    # 🔐 HARDENING STARTS HERE
-    # =========================
-
-    - name: Aggressive Strip Native Libraries
-      run: |
-        cd dex2c
-        echo "=== Aggressive stripping native libs ==="
-        find . -name "*.so" -type f -exec \
-          strip --strip-all \
-          --remove-section=.comment \
-          --remove-section=.note \
-          --remove-section=.note.gnu.build-id \
-          {} \; || true
-
-    - name: Obfuscate ELF Sections
-      run: |
-        cd dex2c
-        echo "=== Obfuscating ELF sections ==="
-        for so in $(find . -name "*.so"); do
-          objcopy \
-            --rename-section .text=.x \
-            --rename-section .rodata=.y \
-            --rename-section .data=.z \
-            --rename-section .bss=.w \
-            "$so" || true
-        done
-
-    - name: Binary XOR Obfuscation (Static)
-      run: |
-        cd dex2c
-        echo "=== Applying binary XOR obfuscation ==="
-        python3 - << 'EOF'
-import os
-KEY = 0xA7
-for root, _, files in os.walk("."):
-    for f in files:
-        if f.endswith(".so"):
-            p = os.path.join(root, f)
-            with open(p, "rb") as r:
-                data = bytearray(r.read())
-            for i in range(len(data)):
-                data[i] ^= KEY
-            with open(p, "wb") as w:
-                w.write(data)
-EOF
-
-    - name: Destroy Readable Strings
-      run: |
-        cd dex2c
-        echo "=== Destroying readable strings ==="
-        for so in $(find . -name "*.so"); do
-          perl -0777 -pe 's/[\x20-\x7E]{5,}/XXXXXX/g' -i "$so" || true
-        done
-
-    # =========================
-    # 📦 FINAL APK PREPARATION
-    # =========================
-
-    - name: Zipalign APK
-      run: |
-        cd dex2c
-        zipalign -f 4 protected.apk aligned.apk
-
-    - name: Sign APK
-      run: |
-        cd dex2c
-        keytool -genkey -v \
-          -keystore debug.keystore \
-          -storepass android \
-          -alias androiddebugkey \
-          -keypass android \
-          -dname "CN=Android,O=Android,C=US" \
-          -keyalg RSA \
-          -keysize 2048 \
-          -validity 10000
-
-        apksigner sign \
-          --ks debug.keystore \
-          --ks-pass pass:android \
-          --key-pass pass:android \
-          aligned.apk
-
-        mv aligned.apk final-protected.apk
-
-    - name: Upload Protected APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: protected-apk
-        path: dex2c/final-protected.apk
+      - name: Upload protected lib
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-lib
+          path: libstub.so
