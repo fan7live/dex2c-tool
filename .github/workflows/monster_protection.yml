@@ -1,4 +1,4 @@
-name: ☢️ PROJECT MONSTER (Final Fix)
+name: ☢️ PROJECT MONSTER (ULTIMATE FIXED)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
 
-      - name: ☕ Setup Java & Python
+      - name: ☕ Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -27,78 +27,77 @@ jobs:
         with:
           python-version: '3.10'
 
-      # تثبيت متطلبات النظام الضرورية للتشفير
       - name: ⚙️ Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner build-essential libssl-dev libffi-dev python3-dev
 
       # ======================================================
-      # 1. تجهيز Apktool ليكون أمرًا نظاميًا (System-Wide)
-      # هذا ضروري لأن Obfuscapk يحاول استدعاء 'apktool' من الـ Terminal
+      # 1. تجهيز Apktool
       # ======================================================
       - name: 🛠️ Setup Apktool System-Wide
         run: |
           mkdir -p tools
-          # تحميل الجار
           wget -q -O tools/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
           
-          # خدعة ذكية: إنشاء أمر وهمي ليعمل في النظام
+          # خدعة: إنشاء أمر وهمي ليعمل في النظام
           echo '#!/bin/bash' > apktool_wrapper
           echo 'java -jar '"$GITHUB_WORKSPACE"'/tools/apktool.jar "$@"' >> apktool_wrapper
           chmod +x apktool_wrapper
           sudo mv apktool_wrapper /usr/local/bin/apktool
           
-          # التحقق من أن apktool يعمل الآن كأمر مباشر
+          # التأكد من التثبيت
           apktool -version
 
       # ======================================================
-      # 2. تثبيت Obfuscapk (التصحيح هنا)
+      # 2. تثبيت Obfuscapk من المصدر (Correct Way)
       # ======================================================
-      - name: 🛠️ Install Obfuscapk (Fixed)
+      - name: 🛠️ Install Obfuscapk (Source)
         run: |
           git clone https://github.com/ClaudiuGeorgiu/Obfuscapk.git obfuscapk_src
           cd obfuscapk_src
-          
-          # هذا هو الأمر المصحح (بدلاً من requirements.txt)
-          # يقوم بقراءة setup.py وتثبيت كل شيء تلقائياً
+          # التثبيت بهذه الطريقة يحل مشكلة requirements
           pip install .
 
       # ======================================================
-      # 3. تثبيت Dex2C (المشروع الأصلي للحماية Native)
+      # 3. تثبيت Dex2C & NDK
       # ======================================================
       - name: 🛠️ Setup NDK & Dex2C
         run: |
-          # Dex2c يعمل بشكل أفضل مع NDK r19c
+          # Dex2C needs Old NDK (r19c is best)
           wget -q https://dl.google.com/android/repository/android-ndk-r19c-linux-x86_64.zip
           unzip -q android-ndk-r19c-linux-x86_64.zip
-          
-          # تعريف مسار NDK للنظام
           echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c" >> $GITHUB_ENV
           
-          # استنساخ dex2c
           git clone https://github.com/amimo/dcc.git dex2c_tool
           cd dex2c_tool
           pip install -r requirements.txt
 
       # ======================================================
-      # 4. تشغيل وحش الحماية
+      # 4. تشغيل وحش الحماية (تم تصحيح الخطأ القاتل هنا)
       # ======================================================
       - name: ☢️ Execute PROTECTION PIPELINE
         run: |
+          # 1. التأكد من وجود التطبيق
           if [ ! -f input.apk ]; then
              echo "::error::ملف input.apk غير موجود!"
              exit 1
           fi
 
-          # نقل input.apk ليكون جاهزًا للسكربت
-          cp input.apk monster_control.py
+          # 2. التأكد من وجود كود التحكم (البايثون)
+          if [ ! -f monster_control.py ]; then
+             echo "::error::ملف monster_control.py غير موجود! تأكد من رفعه للمستودع."
+             exit 1
+          fi
 
-          # تشغيل الكنترول (تأكد أنك قمت برفع كود البايثون المحدث بالأسفل)
+          # 3. تعريف متغير NDK بشكل صريح للجلسة الحالية
+          export NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r19c
+          
+          # تشغيل السكربت (بدون نسخه فوق نفسه بالخطأ!)
           python3 monster_control.py
 
       - name: 📤 Upload Protected Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MONSTER_APP_FIXED
+          name: MONSTER_APP_PROTECTED
           path: final_protected.apk
