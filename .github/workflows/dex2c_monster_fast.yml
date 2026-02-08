@@ -1,10 +1,10 @@
-name: Dex2C Protect APK (FINAL STABLE)
+name: Dex2C Protect APK (FAST & STABLE)
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Enter class name (for reference only, same as old workflow)'
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api)'
         required: true
         default: 'com/fan/live/tv/android/Api'
 
@@ -34,14 +34,32 @@ jobs:
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
         echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-    - name: Setup Dex2C (Stable)
+    - name: Setup Dex2C (OLD FAST METHOD)
       run: |
         git clone https://github.com/codehasan/dex2c.git
         cd dex2c
         pip3 install -r requirements.txt
+        # Use stable old config
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Run Dex2C (WORKING METHOD)
+    - name: Prepare Filter (Only classes you want)
+      run: |
+        cd dex2c
+        echo "=== Setting up filter.txt for selected classes ==="
+        # Take classes input
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
+
+        # Always exclude Android/Java core classes
+        echo "!android/.*;.*" >> filter.txt
+        echo "!java/.*;.*" >> filter.txt
+
+        echo "Filter setup complete:"
+        cat filter.txt
+
+    - name: Run Dex2C (FAST)
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
@@ -51,15 +69,15 @@ jobs:
         cp input.apk dex2c/input.apk
         cd dex2c
 
-        echo "Running Dex2C (same as old working workflow)..."
-        python3 dcc.py -a input.apk -o protected.apk
+        echo "Running Dex2C FAST method..."
+        python3 dcc.py -a input.apk -o protected.apk --filter filter.txt
 
         if [ ! -f "protected.apk" ]; then
           echo "::error::Dex2C FAILED"
           exit 1
         fi
 
-        echo "Checking for .so files..."
+        echo "Verifying .so files..."
         unzip -l protected.apk | grep '\.so' || (echo "::error::NO .so GENERATED" && exit 1)
 
     - name: Upload Protected APK
