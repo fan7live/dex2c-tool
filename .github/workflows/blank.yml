@@ -1,16 +1,16 @@
-name: Dex2C Protect Full APK (Safe Hardening)
+name: Dex2C Protect Full APK (Original + Strong Lib Hardening)
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Classes to protect (comma-separated)'
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api)'
         required: true
         default: 'com/fan/live/tv/android/Api'
       protect_all:
         description: 'Protect all classes? (yes/no)'
         required: false
-        default: 'no'
+        default: 'yes'
 
 jobs:
   build:
@@ -29,6 +29,7 @@ jobs:
           git unzip \
           clang cmake make \
           lib32z1 \
+          binutils \
           zipalign apksigner
 
     - name: Setup Android NDK r21e
@@ -48,12 +49,13 @@ jobs:
           https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Prepare Safe Filter
+    - name: Prepare Filter (ORIGINAL WORKING LOGIC)
       run: |
         cd dex2c
-        echo "=== Creating SAFE filter.txt ==="
+        echo "=== Creating filter.txt (Original Logic) ==="
 
-        echo "# Whitelist (important only)" > filter.txt
+        # نفس سلوكك الأصلي
+        echo "com/fan/live/tv/android/Api;.*" > filter.txt
 
         IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
         for CLASS in "${CLASSES[@]}"; do
@@ -65,19 +67,16 @@ jobs:
         fi
 
         cat << EOF >> filter.txt
-
-        # Blacklist (VERY IMPORTANT to avoid crashes)
         !.*;<init>\(.*\)
         !.*;<clinit>\(.*\)
         !android/.*;.*
         !androidx/.*;.*
         !java/.*;.*
-        !kotlin/.*;.*
         EOF
 
         cat filter.txt
 
-    - name: Run Dex2C
+    - name: Run Dex2C (Original Behavior)
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
@@ -89,18 +88,76 @@ jobs:
 
         python3 dcc.py -a input.apk -o protected.apk
 
-    - name: Strip Native Libraries (IMPORTANT)
+        if [ ! -f "protected.apk" ]; then
+          echo "::error::Dex2C did not generate protected.apk"
+          exit 1
+        fi
+
+    # =========================
+    # 🔐 HARDENING STARTS HERE
+    # =========================
+
+    - name: Aggressive Strip Native Libraries
       run: |
         cd dex2c
-        echo "=== Stripping native symbols ==="
-        find . -name "*.so" -type f -exec strip --strip-unneeded {} \; || true
+        echo "=== Aggressive stripping native libs ==="
+        find . -name "*.so" -type f -exec \
+          strip --strip-all \
+          --remove-section=.comment \
+          --remove-section=.note \
+          --remove-section=.note.gnu.build-id \
+          {} \; || true
+
+    - name: Obfuscate ELF Sections
+      run: |
+        cd dex2c
+        echo "=== Obfuscating ELF sections ==="
+        for so in $(find . -name "*.so"); do
+          objcopy \
+            --rename-section .text=.x \
+            --rename-section .rodata=.y \
+            --rename-section .data=.z \
+            --rename-section .bss=.w \
+            "$so" || true
+        done
+
+    - name: Binary XOR Obfuscation (Static)
+      run: |
+        cd dex2c
+        echo "=== Applying binary XOR obfuscation ==="
+        python3 - << 'EOF'
+import os
+KEY = 0xA7
+for root, _, files in os.walk("."):
+    for f in files:
+        if f.endswith(".so"):
+            p = os.path.join(root, f)
+            with open(p, "rb") as r:
+                data = bytearray(r.read())
+            for i in range(len(data)):
+                data[i] ^= KEY
+            with open(p, "wb") as w:
+                w.write(data)
+EOF
+
+    - name: Destroy Readable Strings
+      run: |
+        cd dex2c
+        echo "=== Destroying readable strings ==="
+        for so in $(find . -name "*.so"); do
+          perl -0777 -pe 's/[\x20-\x7E]{5,}/XXXXXX/g' -i "$so" || true
+        done
+
+    # =========================
+    # 📦 FINAL APK PREPARATION
+    # =========================
 
     - name: Zipalign APK
       run: |
         cd dex2c
         zipalign -f 4 protected.apk aligned.apk
 
-    - name: Sign APK (Debug Key)
+    - name: Sign APK
       run: |
         cd dex2c
         keytool -genkey -v \
