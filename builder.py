@@ -19,7 +19,6 @@ def run_command(command):
     """ دالة لتنفيذ الأوامر مع طباعة الأخطاء بوضوح """
     try:
         print(f"[*] تنفيذ: {command}")
-        # استخدام shell=True لتسهيل التعامل مع المسارات
         subprocess.check_call(command, shell=True)
     except subprocess.CalledProcessError as e:
         print(f"❌ خطأ فادح: فشل الأمر برمز خروج {e.returncode}")
@@ -33,34 +32,47 @@ def protect_smali(file_path):
         
         new_lines = []
         is_class = False
+        class_lines_count = len(lines)
 
-        for line in lines:
+        for i, line in enumerate(lines):
             stripped = line.strip()
             
-            # 1. حذف معلومات المطور (Anti-Debug Info)
-            # هذه المعلومات تساعد الهاكرز في فهم الكود، نحن نحذفها
-            if stripped.startswith('.source') or stripped.startswith('.line') or stripped.startswith('.local'):
+            # --- إصلاح الخطأ السابق هنا ---
+            # 1. حذف معلومات المطور (Debug Info) بحذر
+            
+            # حذف أرقام الأسطر
+            if stripped.startswith('.line '): 
+                continue
+                
+            # حذف اسم الملف الأصلي
+            if stripped.startswith('.source '): 
+                continue
+                
+            # حذف أسماء المتغيرات (Variable Names) 
+            # لكن !!! ممنوع حذف .locals (بصيغة الجمع) لأنها تحدد حجم الذاكرة
+            if stripped.startswith('.local ') and not stripped.startswith('.locals'): 
                 continue
             
-            # تحديد بداية الكلاس
+            # -------------------------------
+            
             if stripped.startswith('.class'):
                 is_class = True
             
             new_lines.append(line)
 
-        # 2. حقن دالة وهمية في النهاية (Junk Code Injection)
-        # هذا يجعل البصمة الرقمية (Hash) للملف تتغير تمامًا
-        if is_class and len(new_lines) > 2:
-            junk_name = "z" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=5))
+        # 2. حقن دالة وهمية في النهاية (Junk Code)
+        # فقط إذا كان الملف كبيراً بما يكفي (تجنب الملفات الصغيرة جداً أو الواجهات interfaces)
+        if is_class and class_lines_count > 20:
+            # اسم عشوائي للدالة لمنع التكرار
+            junk_name = "z" + ''.join(random.choices(string.ascii_lowercase, k=6))
             
-            # كود دالة وهمية آمن لا يكسر التطبيق
+            # كود دالة فارغة تماماً وآمنة (Safe Void Method)
             junk_method = f"\n.method public static {junk_name}()V\n"
-            junk_method += "    .locals 1\n"
-            junk_method += "    const/4 v0, 0x0\n"
+            junk_method += "    .locals 0\n"
             junk_method += "    return-void\n"
             junk_method += ".end method\n"
 
-            # البحث عن مكان مناسب للحقن (قبل نهاية الكلاس مباشرة)
+            # البحث عن آخر سطر (.end class) للإضافة قبله
             injected = False
             for i in range(len(new_lines)-1, 0, -1):
                 if new_lines[i].strip().startswith('.end class'):
@@ -72,49 +84,59 @@ def protect_smali(file_path):
             f.write("".join(new_lines))
 
     except Exception as e:
-        print(f"⚠️ تحذير: لم تتم حماية {file_path} - السبب: {e}")
+        print(f"⚠️ تجاوز ملف بسبب خطأ عرضي: {file_path}")
 
 def main():
-    print(">>> بدء عملية الحماية (Fortress Mode) ...")
+    print(">>> بدء عملية الحماية (Fixed Mode) ...")
 
-    # 1. التنظيف الأولي
+    # تنظيف مسبق
     if os.path.exists(TEMP_DIR):
         shutil.rmtree(TEMP_DIR)
     
-    if os.path.exists("unaligned.apk"):
-        os.remove("unaligned.apk")
-
-    # 2. تفكيك التطبيق (Decompile)
+    # 1. تفكيك التطبيق
     print(">>> [1/5] جاري تفكيك APK...")
-    cmd_decomp = f"java -jar {APKTOOL_JAR} d {INPUT_APK} -o {TEMP_DIR} -f"
-    run_command(cmd_decomp)
+    # استخدام -r لمنع تفكيك الموارد (resources) أحياناً يسرع ويقلل الأخطاء، لكن سنتركه لضمان التوافق
+    run_command(f"java -jar {APKTOOL_JAR} d {INPUT_APK} -o {TEMP_DIR} -f")
 
-    # 3. تشفير وحماية ملفات Smali
-    print(">>> [2/5] جاري تطبيق الحماية على الكود...")
+    # 2. حماية الكود
+    print(">>> [2/5] جاري تشفير وحماية Smali...")
+    # البحث عن كل ملفات smali في كل المجلدات
     smali_files = glob.glob(f"{TEMP_DIR}/**/*.smali", recursive=True)
     
+    count_protected = 0
+    count_skipped = 0
+
     for smali in smali_files:
-        # تجاوز ملفات الأندرويد الأساسية لتجنب تدمير التطبيق
-        if "androidx" in smali or "android/support" in smali or "kotlin" in smali:
+        # التطبيع مع مسار الملف لتجنب مشاكل ويندوز/لينكس
+        path_str = smali.replace("\\", "/")
+        
+        # --- استثناءات مهمة جداً (قائمة الحظر) ---
+        # لا نلمس ملفات النظام أو المكتبات المشهورة لأن تعديلها يكسر التطبيق فوراً
+        if "android/" in path_str or \
+           "androidx/" in path_str or \
+           "com/google/" in path_str or \
+           "kotlin/" in path_str or \
+           "R$" in path_str or \
+           "BuildConfig" in path_str:
+            count_skipped += 1
             continue
+            
         protect_smali(smali)
+        count_protected += 1
 
-    # 4. إعادة البناء (Build)
-    print(">>> [3/5] إعادة تجميع التطبيق...")
-    cmd_build = f"java -jar {APKTOOL_JAR} b {TEMP_DIR} -o unaligned.apk"
-    run_command(cmd_build)
+    print(f"[*] تم الانتهاء: حماية {count_protected} ملف | تجاوز {count_skipped} ملف نظام.")
 
-    # 5. محاذاة الملف (Zipalign)
-    print(">>> [4/5] تحسين الذاكرة (Zipalign)...")
-    cmd_align = "zipalign -p -f -v 4 unaligned.apk aligned.apk"
-    run_command(cmd_align)
+    # 3. إعادة البناء
+    print(">>> [3/5] إعادة بناء APK...")
+    run_command(f"java -jar {APKTOOL_JAR} b {TEMP_DIR} -o unaligned.apk")
 
-    # 6. التوقيع (Signing)
-    print(">>> [5/5] توقيع التطبيق المحمي...")
-    
-    # إنشاء مفتاح إذا لم يوجد
+    # 4. محاذاة
+    print(">>> [4/5] تحسين (Zipalign)...")
+    run_command("zipalign -p -f -v 4 unaligned.apk aligned.apk")
+
+    # 5. التوقيع
+    print(">>> [5/5] توقيع التطبيق...")
     if not os.path.exists(KEYSTORE_PATH):
-        # تم تقسيم الأمر الطويل لمنع الأخطاء
         cmd_keygen = (
             f"keytool -genkey -v -keystore {KEYSTORE_PATH} "
             "-alias androiddebugkey -keyalg RSA -keysize 2048 "
@@ -123,8 +145,6 @@ def main():
         )
         run_command(cmd_keygen)
 
-    # توقيع التطبيق
-    # تم تقسيم الأمر هنا أيضًا لأنه كان سبب المشكلة لديك
     cmd_sign = (
         f"apksigner sign --ks {KEYSTORE_PATH} "
         "--ks-pass pass:android --key-pass pass:android "
@@ -133,12 +153,11 @@ def main():
     run_command(cmd_sign)
 
     # تنظيف
-    print(">>> تنظيف الملفات المؤقتة...")
     if os.path.exists(TEMP_DIR): shutil.rmtree(TEMP_DIR)
     if os.path.exists("aligned.apk"): os.remove("aligned.apk")
     if os.path.exists("unaligned.apk"): os.remove("unaligned.apk")
 
-    print(f"\n🎉 ✅ تم الانتهاء! التطبيق المحمي موجود باسم: {OUTPUT_APK}")
+    print(f"\n🎉 تم بنجاح! حمل تطبيقك من: {OUTPUT_APK}")
 
 if __name__ == "__main__":
     main()
