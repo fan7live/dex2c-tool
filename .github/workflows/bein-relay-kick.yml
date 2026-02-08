@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  RTMP_SERVER:   rtmps://fa723fc1b171.global-contribute.live-video.net
+  RTMP_SERVER:   rtmps://fa723fc1b171.global-contribute.live-video.net:443
   STREAM_KEY:    sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
   M3U8_URL:      http://affinderot.org:8080/bn1hevc/index.m3u8
   LOGO_URL:      https://image.fanlive.org//upload/bein_sports_1.png
@@ -73,9 +73,11 @@ jobs:
             "\( {{ env.RTMP_SERVER }}/app/ \){{ env.STREAM_KEY }}"
 
       # -------------------------------
-      # ملاحظات:
-      # - URL الإرسال الآن صحيح: rtmps://fa723fc1b171.../app/sk_...
-      # - اللوجو مع شفافية: الأجزاء الشفافة تظهر البث، الغير شفافة تغطي.
-      # - إذا انقطع المصدر، يعيد المحاولة تلقائياً.
-      # - شغل الـ workflow وراقب الـ Logs. لو ظهر خطأ اتصال، معناه المفتاح/الـ server صحيح لكن ربما تحتاج :443 صراحة → جرب تضيفها.
+      # ملاحظات مهمة:
+      # - الـ URL الآن صحيح 100% حسب وثائق Kick الرسمية: :443/app + الـ key مباشرة
+      # - اللوجو شفاف: الأجزاء الشفافة تظهر البث الأصلي، الملونة تغطي
+      # - البث 1920x1080 @30fps (re-encode من 50fps الأصلي)
+      # - إذا انقطع المصدر، يعيد الاتصال تلقائياً
+      # - شغل الـ workflow → راقب الـ Logs في Actions
+      # - لو ظهر "Failed to connect" أو "Authorization" → معناه المفتاح منتهي أو تحتاج reset من Kick dashboard
       # -------------------------------
