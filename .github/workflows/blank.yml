@@ -122,8 +122,10 @@ jobs:
               if [ -f "$so" ]; then
                 echo "Stripping symbols from $so"
                 "$NDK_STRIP" --strip-all "$so"
+                echo "Setting executable permissions on $so"
+                chmod +x "$so"
                 echo "Compressing and obfuscating $so with UPX"
-                upx --best "$so"
+                upx --best --android-shlib "$so" || { echo "UPX failed for $so, continuing..."; }
               fi
             done
           fi
