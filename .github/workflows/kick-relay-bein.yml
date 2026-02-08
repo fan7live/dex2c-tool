@@ -1,0 +1,79 @@
+name: m3u8 → RTMP relay with full-screen logo overlay (Bein Sports 1)
+
+on:
+  workflow_dispatch:
+
+env:
+  RTMP_SERVER:   rtmps://fa723fc1b171.global-contribute.live-video.net
+  STREAM_KEY:    sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
+  M3U8_URL:      http://affinderot.org:8080/bn1hevc/index.m3u8
+  LOGO_URL:      https://image.fanlive.org//upload/bein_sports_1.png
+
+  # ────────────────────────────────────────────────
+  #          القيم أعلاه تم إضافتها حسب طلبك
+  # ────────────────────────────────────────────────
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0   # لا timeout → يستمر حتى توقفه يدوياً من GitHub
+
+    steps:
+      - name: Install FFmpeg (latest static build)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y wget tar
+          wget -O ffmpeg-git-amd64-static.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          tar xf ffmpeg-git-amd64-static.tar.xz
+          sudo mv ffmpeg-*-amd64-static/ffmpeg  /usr/local/bin/ffmpeg
+          sudo mv ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe
+          sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+          ffmpeg -version | head -n1
+
+      - name: Download logo image
+        run: |
+          wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
+
+      - name: Start infinite RTMP relay to Kick.com with full-screen logo overlay
+        run: |
+          ffmpeg \
+            -re \
+            -stream_loop -1 \
+            -i "${{ env.M3U8_URL }}" \
+            -loop 1 -i /tmp/logo.png \
+            -filter_complex "
+              [0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[vmain];
+              [1:v]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1920:1080,format=yuva420p[vlogo];
+              [vmain][vlogo]overlay=0:0:enable='between(t,0,inf)'[v]
+            " \
+            -map "[v]" \
+            -map 0:a? \
+            -c:v libx264 \
+            -preset veryfast \
+            -tune zerolatency \
+            -profile:v main \
+            -level 4.0 \
+            -pix_fmt yuv420p \
+            -g 60 \
+            -r 30 \
+            -b:v 4000k \
+            -maxrate 4000k \
+            -bufsize 8000k \
+            -c:a aac \
+            -b:a 160k \
+            -ar 44100 \
+            -f flv \
+            -reconnect 1 \
+            -reconnect_streamed 1 \
+            -reconnect_delay_max 20 \
+            -reconnect_on_network_error 1 \
+            -reconnect_on_http_error 4xx,5xx \
+            "\( {{ env.RTMP_SERVER }}/app/ \){{ env.STREAM_KEY }}"
+
+        # ملاحظات مهمة:
+        #   • الوجهة هي Kick.com (rtmps + /app/ + المفتاح)
+        #   • -f flv مطلوب لـ Kick ومعظم منصات RTMP(S)
+        #   • اللوجو يتم تكبيره ليغطي الشاشة كاملة (scale + crop)
+        #   • إذا كان اللوجو png بشفافية، سيظهر الشاشة الخلفية من خلاله
+        #   • إذا كان اللوجو بدون شفافية (صلب)، سيغطي الفيديو بالكامل
+        #   • البث يستمر 24/7 حتى توقفه يدوياً من Actions → Cancel workflow
