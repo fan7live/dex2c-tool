@@ -1,131 +1,192 @@
-import os
+import asyncio
+import aiohttp
+import json
+import time
 import subprocess
-import shutil
-import sys
-import glob
+import hashlib
 
-# ================= إعدادات الوحش =================
-INPUT_APK = "input.apk"
-INTERMEDIATE_APK = "stage1_native.apk"
-FINAL_UNSIGNED = "stage2_obfuscated.apk"
-OUTPUT_APK = "final_protected.apk"
-# Dex2C setup
-DCC_DIR = "dex2c_tool"
-NDK_ROOT = os.environ.get("NDK_ROOT")
-# ==================================================
+# =========================================================
+#  CONFIGURATION AREA
+# =========================================================
 
-def run_cmd(command, error_msg="Error"):
-    print(f"\n➤ تشغيل: {command}")
+# رابط ملف الداتا المباشر
+JSON_DB_URL = "https://oma-server.site/omar/db.json"
+
+# هام جداً: مفتاح الاستضافة (يجب أن يطابق المفتاح الذي أدخلته في لوحة PHP)
+# غير هذا المفتاح في كل استضافة جديدة تستخدمها
+MY_NODE_KEY = "omar_094_key"  # <--- مثال: غيره إلى أي كلمة وادخلها في اللوحة
+
+# =========================================================
+
+running_streams = {} # { 'stream_id': { 'process': proc, 'hash': 'abc...' } }
+
+async def fetch_db_data():
+    """Download database json"""
     try:
-        subprocess.check_call(command, shell=True)
-        return True
-    except subprocess.CalledProcessError:
-        print(f"❌ {error_msg}")
-        return False
+        ts = int(time.time())
+        url = f"{JSON_DB_URL}?t={ts}" # No Cache
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10, ssl=False) as response:
+                if response.status == 200:
+                    data = await response.json(content_type=None)
+                    return data.get('streams', {})
+                return {}
+    except Exception as e:
+        print(f"⚠️ Net Error: {e}")
+        return {}
 
-def stage_1_dex2c():
-    """ المرحلة 1: الحماية بتحويل الجافا لـ Native """
-    print("\n" + "="*40)
-    print("🛠️ Stage 1: Dex2C (Native Protection)")
-    print("="*40)
-
-    # جلب ملف dcc.py من المجلد الذي تم استنساخه
-    if not os.path.exists("dcc.py"):
-        if os.path.exists(f"{DCC_DIR}/dcc.py"):
-            shutil.copy(f"{DCC_DIR}/dcc.py", ".")
-            if os.path.exists(f"{DCC_DIR}/dcc"): 
-                shutil.copytree(f"{DCC_DIR}/dcc", "dcc", dirs_exist_ok=True)
-
-    # إنشاء ملف فلتر لتحديد الحزم
-    with open("filter.txt", "w") as f:
-        # هنا يتم تحديد ما يتم حمايته (تلقائيا نحمي كل حزمة com)
-        f.write("com/.*;.*\n")     
-        f.write("!android/.*;.*\n") 
-        f.write("!androidx/.*;.*\n")
-        f.write("!com/google/.*;.*\n")
+def build_ffmpeg_cmd(config):
+    """بناء أوامر FFmpeg بناءً على المدخلات ودعم كافة المنصات"""
+    input_url = config['input']
+    rtmp_url = config['server'].rstrip('/')
+    key = config['stream_key']
+    quality = config['quality']
+    overlay = config.get('overlay', '')
     
-    # تنفيذ Dex2C
-    # ملاحظة: إذا فشل هذا، غالبا بسبب تعارض NDK أو عدم وجود كلاسات متوافقة
-    cmd = f"python3 dcc.py -a {INPUT_APK} -o {INTERMEDIATE_APK} --ndk {NDK_ROOT} --filter filter.txt --skip-synthetic"
+    # تحديد الرابط النهائي بشكل صحيح (يدعم rtmps)
+    separator = "/"
+    if "youtube" in rtmp_url: separator = "/" # يوتيوب يحب /
+    output = f"{rtmp_url}{separator}{key}"
+    if "facebook" in rtmp_url: output = f"{rtmp_url}" # فيسبوك يضع المفتاح ضمن الرابط احيانا ولكن الافتراضي كسر هذا
+    if not output.startswith('rtmp'): # في حالة الكستم ربما المستخدم وضع الرابط كاملا
+        pass 
+        
+    # الأمر الأساسي هو إعادة تشكيل flv
+    # هذه الإعدادات تعمل مع فيسبوك ويوتيوب وكيك بشكل ممتاز
+    output = f"{rtmp_url}/{key}"
     
-    if run_cmd(cmd, "تحذير: Dex2C لم يعمل كما يجب، سننتقل للتشفير المباشر") and os.path.exists(INTERMEDIATE_APK):
-        print("✅ Dex2C نجح في تحويل الكود.")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    
+    # تحسين الدخل HTTP
+    if input_url.startswith('http'):
+        cmd.extend([
+            '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+            '-timeout', '10000000'
+        ])
+    
+    # Loop for videos
+    if not input_url.startswith(('rtmp', 'rtsp')):
+        cmd.extend(['-stream_loop', '-1'])
+    
+    cmd.extend(['-re', '-i', input_url])
+
+    # منطق الاوفرلاي والجودة
+    has_overlay = (quality in ['custom', 'high_quality']) and (len(overlay) > 5)
+
+    if has_overlay:
+        cmd.extend(['-i', overlay])
+        
+        # الأبعاد
+        w, h = ("1280", "720") if quality == 'custom' else ("1920", "1080")
+        bitrate = "3000k" if quality == 'custom' else "6000k"
+        bufsize = str(int(bitrate[:-1]) * 2) + "k"
+        
+        # فلتر معقد للتحجيم ووضع الصورة
+        filter_str = (
+            f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:-1:-1[bg];"
+            f"[1:v]scale={w}:{h}[fg];"
+            f"[bg][fg]overlay=0:0"
+        )
+        
+        cmd.extend([
+            '-filter_complex', filter_str,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+            '-b:v', bitrate, '-maxrate', bitrate, '-bufsize', bufsize,
+            '-pix_fmt', 'yuv420p', '-g', '60', '-r', '30'
+        ])
     else:
-        print("⚠️ سيتم تخطي Dex2C واستخدام APK الأصلي.")
-        shutil.copy(INPUT_APK, INTERMEDIATE_APK)
+        # بث عادي (Copy/Transcode)
+        # نستخدم libx264 لضمان التوافق مع كل المنصات (Copy قد يفشل مع تويتر وفيسبوك اذا اختلف الكوديك)
+        cmd.extend([
+            '-c:v', 'libx264', '-preset', 'veryfast', 
+            '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '5000k',
+            '-pix_fmt', 'yuv420p', '-g', '60'
+        ])
 
-def stage_2_obfuscapk():
-    """ المرحلة 2: تشفير وفوضى الكود (Obfuscapk) """
-    print("\n" + "="*40)
-    print("🌪️ Stage 2: Obfuscapk (Logic Scrambling)")
-    print("="*40)
+    # الصوت
+    cmd.extend(['-c:a', 'aac', '-b:a', '128k', '-ar', '44100'])
     
-    # اختيار الهجمات الدفاعية
-    # ArithmeticBranch: يحول الأرقام لمعادلات
-    # RandomManifest: يضيف ملفات وهمية
-    # ClassRename / MethodRename: يغير الأسماء
-    obfuscators = "ArithmeticBranch CallIndirection ConstStringEncryption FieldRename MethodRename RandomManifest Nop"
+    # أهم سطر: Format flv ليعمل مع RTMP
+    cmd.extend(['-f', 'flv', output])
     
-    work_dir = "obfuscation_work"
-    if os.path.exists(work_dir): shutil.rmtree(work_dir)
+    return cmd
 
-    cmd = (
-        f"obfuscapk "
-        f"-o {obfuscators} "
-        f"-w {work_dir} "
-        f"{INTERMEDIATE_APK}"
-    )
+async def start_stream(sid, config):
+    cmd = build_ffmpeg_cmd(config)
+    print(f"🚀 START: {config['name']} -> {config['platform']}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        return proc
+    except Exception as e:
+        print(f"❌ Error starting ffmpeg: {e}")
+        return None
+
+async def main():
+    print(f"🌟 STREAM ENGINE STARTED | NODE KEY: {MY_NODE_KEY}")
     
-    success = run_cmd(cmd, "Obfuscapk encountered an error")
-    
-    # العثور على الملف الناتج
-    found = False
-    if success:
-        for f in glob.glob(f"{work_dir}/*_obfuscated.apk"):
-            shutil.move(f, FINAL_UNSIGNED)
-            found = True
-            break
+    while True:
+        # 1. جلب الداتا
+        db_streams = await fetch_db_data()
+        
+        # تصفية البثوث الخاصة بهذا النود فقط
+        my_targets = {}
+        for sid, s in db_streams.items():
+            if s.get('node_key') == MY_NODE_KEY:
+                my_targets[sid] = s
+
+        current_active_sids = list(running_streams.keys())
+
+        # 2. الفحص وإدارة العمليات
+        for sid in current_active_sids:
             
-    if not found:
-        print("⚠️ Obfuscapk لم ينتج ملفاً، نستخدم المرحلة السابقة.")
-        shutil.copy(INTERMEDIATE_APK, FINAL_UNSIGNED)
+            # حالة 1: تم الحذف أو تغيير النود أو الإيقاف
+            should_stop = False
+            if sid not in my_targets:
+                should_stop = True # حذف
+            elif my_targets[sid]['status'] != 'on':
+                should_stop = True # ايقاف يدوي
+            elif my_targets[sid]['hash'] != running_streams[sid]['hash']:
+                 # حالة 2: الهاش تغير!! (تعديل مباشر في اللوجو او الرابط)
+                 # نقوم بالإيقاف هنا ليعاد التشغيل في الخطوة التالية فوراً
+                 print(f"🔄 DETECTED CHANGE FOR: {running_streams[sid]['name']}")
+                 should_stop = True 
+            
+            if should_stop:
+                print(f"🛑 STOPPING: {sid}")
+                try:
+                    running_streams[sid]['process'].kill()
+                    await running_streams[sid]['process'].wait()
+                except: pass
+                del running_streams[sid]
 
-def stage_3_signing():
-    """ المرحلة 3: التوقيع """
-    print("\n" + "="*40)
-    print("✍️ Stage 3: Signing & ZipAlign")
-    print("="*40)
-
-    # 1. ZipAlign
-    run_cmd(f"zipalign -p -f -v 4 {FINAL_UNSIGNED} aligned.apk", "فشل Zipalign")
-
-    # 2. KeyStore
-    keystore = "my_key.jks"
-    if not os.path.exists(keystore):
-        cmd_k = 'keytool -genkey -v -keystore my_key.jks -alias secure -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Sec,O=App,C=US"'
-        run_cmd(cmd_k)
-
-    # 3. Sign
-    cmd_s = (
-        f"apksigner sign --ks my_key.jks "
-        "--ks-pass pass:123456 --key-pass pass:123456 "
-        f"--out {OUTPUT_APK} aligned.apk"
-    )
-    run_cmd(cmd_s, "فشل التوقيع النهائي")
-
-    if os.path.exists("aligned.apk"): os.remove("aligned.apk")
-
-def main():
-    print("🚀 بدء المعركة...")
-    stage_1_dex2c()
-    stage_2_obfuscapk()
-    stage_3_signing()
-    
-    if os.path.exists(OUTPUT_APK):
-        print(f"\n🎉 مبروك! التطبيق المحمي جاهز للتحميل: {OUTPUT_APK}")
-    else:
-        print("\n❌ حدث خطأ، لم يتم استخراج الملف النهائي.")
-        sys.exit(1)
+        # 3. التشغيل الجديد أو إعادة التشغيل بعد التعديل
+        for sid, conf in my_targets.items():
+            if conf['status'] == 'on':
+                if sid not in running_streams:
+                    # بدء جديد
+                    proc = await start_stream(sid, conf)
+                    if proc:
+                        running_streams[sid] = {
+                            'process': proc,
+                            'hash': conf.get('hash', ''), # حفظ الهاش الحالي
+                            'name': conf['name']
+                        }
+                else:
+                    # فحص صحة العملية
+                    proc = running_streams[sid]['process']
+                    if proc.returncode is not None:
+                        # العملية ماتت فجأة، اعادة تشغيل
+                        print(f"⚠️ CRASH DETECTED: {conf['name']} -> Restarting...")
+                        del running_streams[sid]
+                        # سيتم اعادة تشغيلها في الدورة القادمة (بعد ثوان)
+                        
+        await asyncio.sleep(4) # انتظار 4 ثواني
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
