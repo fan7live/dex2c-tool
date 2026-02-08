@@ -39,31 +39,33 @@ jobs:
         echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
     # =======================
-    # Obfuscation Layer (SAFE)
+    # SAFE DEX OBFUSCATION
     # =======================
-    - name: Obfuscate DEX (Pre-Native)
+    - name: Safe DEX Obfuscation (Pre-Native)
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
           exit 1
         fi
 
-        git clone https://github.com/anishathalye/obfuscapk.git
-        cd obfuscapk
+        git clone https://github.com/teknogeek/apkfuscator.git
+        cd apkfuscator
         pip3 install -r requirements.txt
 
-        python3 obfuscapk.py \
-          --skip-resources \
-          --skip-signing \
-          --obfuscate-strings \
-          --obfuscate-control-flow \
-          --rename-classes \
-          ../input.apk
+        python3 apkfuscator.py \
+          -i ../input.apk \
+          -o ../stage.apk \
+          --rename \
+          --string-encryption \
+          --control-flow
 
-        mv ../input_obfuscated.apk ../stage.apk
+        if [ ! -f "../stage.apk" ]; then
+          echo "::error::DEX obfuscation failed"
+          exit 1
+        fi
 
     # =======================
-    # Dex2C Setup
+    # SETUP DEX2C
     # =======================
     - name: Setup Dex2C
       run: |
@@ -76,12 +78,12 @@ jobs:
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
     # =======================
-    # Filter (SAME INPUT LOGIC)
+    # FILTER (SAME INPUT STYLE)
     # =======================
     - name: Prepare Dex2C Filter
       run: |
         cd dex2c
-        echo "=== Generating filter.txt ===" > filter.txt
+        > filter.txt
 
         IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
         for CLASS in "${CLASSES[@]}"; do
@@ -99,10 +101,11 @@ jobs:
         !java/.*;.*
         EOF
 
+        echo "==== filter.txt ===="
         cat filter.txt
 
     # =======================
-    # Dex2C Convert
+    # RUN DEX2C
     # =======================
     - name: Run Dex2C
       run: |
@@ -110,10 +113,15 @@ jobs:
         cd dex2c
         python3 dcc.py -a input.apk -o protected.apk
 
+        if [ ! -f "protected.apk" ]; then
+          echo "::error::Dex2C failed"
+          exit 1
+        fi
+
     # =======================
-    # Native Hardening (SAFE)
+    # NATIVE HARDENING
     # =======================
-    - name: Native Hardening
+    - name: Native Hardening & Sign
       run: |
         cd dex2c
         unzip protected.apk -d apkdir
@@ -122,7 +130,6 @@ jobs:
 
         for so in apkdir/lib/*/*.so; do
           [ -f "$so" ] || continue
-          echo "Stripping $so"
           "$STRIP" --strip-all "$so"
           chmod 755 "$so"
         done
