@@ -3,58 +3,145 @@ name: Dex2C Protect Full APK
 on:
   workflow_dispatch:
     inputs:
-      classes_or_packages:
-        description: 'Classes or packages (comma separated)'
+      classes:
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
         required: true
-        default: ''
+        default: 'com/fan/live/tv/android/Api'
+      protect_all:
+        description: 'Protect all classes? (yes/no)'
+        required: false
+        default: 'yes'
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    - name: Checkout Repo
+      uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y unzip zip openjdk-11-jdk python3 python3-pip cmake clang make
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3 python3-pip \
+          openjdk-11-jdk \
+          git unzip \
+          clang cmake make \
+          lib32z1 \
+          zipalign apksigner \
+          upx-ucl
 
-      - name: Verify input APK
-        run: |
-          if [ ! -f "input.apk" ]; then
-            echo "::error::input.apk NOT FOUND"
-            exit 1
+    - name: Setup Android NDK r21e
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip -q android-ndk-r21e-linux-x86_64.zip
+        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+
+    - name: Setup Dex2C
+      run: |
+        git clone https://github.com/codehasan/dex2c.git
+        cd dex2c
+        pip3 install -r requirements.txt
+        mkdir -p tools
+        wget -q -O tools/apktool.jar \
+          https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
+
+    - name: Prepare Filter for Full Protection
+      run: |
+        cd dex2c
+        echo "=== Setting up filter.txt for maximum protection ==="
+        
+        # توليد الـ whitelist بناءً على الـ inputs
+        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
+        
+        # إضافة الكلاسات اللي دخلتها
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
+        
+        # لو protect_all = yes، أضف whitelist عام
+        if [ "${{ inputs.protect_all }}" = "yes" ]; then
+          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+        fi
+        
+        # إضافة الـ blacklist الثابت
+        cat << EOF >> filter.txt
+        
+        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
+        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
+        !.*;<clinit>\(.*\) # استثنِ static initializers
+        !android/.*;.*  # استثنِ Android SDK classes
+        !java/.*;.*     # استثنِ Java standard classes
+        EOF
+        
+        echo "Filter setup complete:"
+        cat filter.txt
+
+    - name: Run Dex2C on Full APK
+      run: |
+        if [ ! -f "input.apk" ]; then
+          echo "::error::input.apk NOT FOUND"
+          exit 1
+        fi
+
+        cp input.apk dex2c/input.apk
+        cd dex2c
+
+        echo "=== Protecting FULL APK ==="
+
+        python3 dcc.py -a input.apk -o protected.apk
+
+        echo "=== Verification ==="
+        if [ -f "protected.apk" ]; then
+          echo "SUCCESS: protected.apk created"
+          ls -lh protected.apk
+        else
+          echo "::error::FAILED: No protected.apk generated"
+          exit 1
+        fi
+
+    - name: Obfuscate Native Libraries
+      run: |
+        cd dex2c
+        
+        # Generate a debug keystore for signing
+        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+        
+        mkdir protected_dir
+        unzip protected.apk -d protected_dir
+        
+        NDK_STRIP="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+        
+        for libdir in protected_dir/lib/*; do
+          if [ -d "$libdir" ]; then
+            for so in "$libdir"/*.so; do
+              if [ -f "$so" ]; then
+                echo "Stripping symbols from $so"
+                "$NDK_STRIP" --strip-all "$so"
+                echo "Compressing and obfuscating $so with UPX"
+                upx --best "$so"
+              fi
+            done
           fi
+        done
+        
+        cd protected_dir
+        zip -r ../protected_obfuscated.apk .
+        cd ..
+        
+        zipalign -v -p 4 protected_obfuscated.apk aligned.apk
+        
+        apksigner sign --ks debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android aligned.apk
+        
+        mv aligned.apk protected.apk
+        echo "Obfuscated and protected APK ready"
 
-      - name: Prepare dex2c
-        run: |
-          chmod +x dex2c.sh
-
-      - name: Run dex2c
-        run: |
-          ./dex2c.sh input.apk "${{ github.event.inputs.classes_or_packages }}"
-
-      - name: Verify output lib
-        run: |
-          if [ ! -f "libstub.so" ]; then
-            echo "::error::libstub.so not generated"
-            exit 1
-          fi
-
-      - name: Strip symbols
-        run: |
-          strip --strip-all libstub.so
-
-      - name: Simple ELF hardening
-        run: |
-          echo "Hardening ELF"
-          chmod 000 libstub.so
-          chmod 644 libstub.so
-
-      - name: Upload protected lib
-        uses: actions/upload-artifact@v4
-        with:
-          name: protected-lib
-          path: libstub.so
+    - name: Upload Protected APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: protected-apk
+        path: dex2c/protected.apk
