@@ -1,11 +1,21 @@
-name: 1080p High Performance Stream
+name: 1080p High Performance Stream (Custom Input)
 
 on:
   workflow_dispatch:
+    inputs:
+      stream_source:
+        description: 'أدخل رابط البث المراد إعادة بثه (M3U8 / URL)'
+        required: true
+        default: 'http://affinderot.org:8080/bn1hevc/index.m3u8'
+        type: string
+      stream_key:
+        description: 'أدخل مفتاح البث فقط (مثال: sk_us-west...)'
+        required: true
+        type: string
 
 env:
-  RTMP_FULL: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
-  M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
+  # رابط السيرفر الثابت كما طلبت
+  RTMP_SERVER: "rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/"
 
 jobs:
   stream_1080:
@@ -17,24 +27,34 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wget
-          # نستخدم النسخة الأصلية للأداء المستقر
+          # تحميل وتركيب FFmpeg النسخة الأصلية للأداء المستقر
           wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
           tar xf ffmpeg-master-latest-linux64-gpl.tar.xz
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg
           chmod +x /usr/local/bin/ffmpeg
 
+      - name: Prepare Stream Info
+        id: info
+        run: |
+          # إخفاء المفتاح من سجلات التشغيل للحماية
+          echo "::add-mask::${{ github.event.inputs.stream_key }}"
+
       - name: Start 1080p Stream (High Performance)
         run: |
-          # التعديلات الحرجة لتشغيل 1080p بدون لاغ:
-          # -r 30: تثبيت الإطارات على 30 لتقليل ضغط المعالج للنصف
-          # -c:a copy: نسخ الصوت لتوفير الموارد
-          # -max_muxing_queue_size 4096: لمنع رسائل buffer underflow
-          # -preset ultrafast: الأولوية للسرعة المطلقة
+          echo "Starting Stream Processing..."
           
-          ffmpeg -hide_banner -loglevel warning \
+          # تجميع الرابط النهائي (السيرفر الثابت + المفتاح المدخل)
+          RTMP_FINAL="${{ env.RTMP_SERVER }}${{ github.event.inputs.stream_key }}"
+
+          # إعدادات FFmpeg للأداء العالي وتفادي اللاغ
+          # -r 30: تثبيت الإطارات
+          # -tune zerolatency: لتقليل التأخير
+          # -preset ultrafast: لتخفيف الضغط عن المعالج
+
+          ffmpeg -hide_banner -loglevel error \
             -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
             -thread_queue_size 2048 \
-            -i "${{ env.M3U8_URL }}" \
+            -i "${{ github.event.inputs.stream_source }}" \
             -map 0:v -map 0:a \
             -c:v libx264 -preset ultrafast -tune zerolatency \
             -b:v 4500k -maxrate 4500k -bufsize 9000k \
@@ -43,4 +63,4 @@ jobs:
             -c:a copy \
             -f flv \
             -max_muxing_queue_size 4096 \
-            "${{ env.RTMP_FULL }}"
+            "$RTMP_FINAL"
