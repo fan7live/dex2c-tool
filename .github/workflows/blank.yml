@@ -1,4 +1,4 @@
-name: Dex2C Hybrid Protect Full APK
+name: Dex2C Stable Protect APK
 
 on:
   workflow_dispatch:
@@ -39,36 +39,7 @@ jobs:
         echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
     # =======================
-    # SAFE DEX OBFUSCATION (NO GIT CLONE)
-    # =======================
-    - name: Safe DEX Obfuscation
-      run: |
-        if [ ! -f "input.apk" ]; then
-          echo "::error::input.apk NOT FOUND"
-          exit 1
-        fi
-
-        echo "Downloading APKfuscator (ZIP)"
-        wget -q https://github.com/teknogeek/apkfuscator/archive/refs/heads/master.zip -O apkfuscator.zip
-        unzip -q apkfuscator.zip
-        cd apkfuscator-master
-
-        pip3 install -r requirements.txt
-
-        python3 apkfuscator.py \
-          -i ../input.apk \
-          -o ../stage.apk \
-          --rename \
-          --string-encryption \
-          --control-flow
-
-        if [ ! -f "../stage.apk" ]; then
-          echo "::error::DEX obfuscation failed"
-          exit 1
-        fi
-
-    # =======================
-    # SETUP DEX2C
+    # SETUP DEX2C (STABLE)
     # =======================
     - name: Setup Dex2C
       run: |
@@ -84,7 +55,7 @@ jobs:
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
     # =======================
-    # FILTER (SAME INPUT STYLE)
+    # FILTER (SAFE)
     # =======================
     - name: Prepare Dex2C Filter
       run: |
@@ -114,7 +85,12 @@ jobs:
     # =======================
     - name: Run Dex2C
       run: |
-        cp stage.apk dex2c/input.apk
+        if [ ! -f "input.apk" ]; then
+          echo "::error::input.apk NOT FOUND"
+          exit 1
+        fi
+
+        cp input.apk dex2c/input.apk
         cd dex2c
         python3 dcc.py -a input.apk -o protected.apk
 
