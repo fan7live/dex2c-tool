@@ -1,10 +1,10 @@
-name: Dex2C Protect Full APK
+name: Dex2C Hybrid Protect Full APK
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
+        description: 'Enter classes to protect (comma-separated)'
         required: true
         default: 'com/fan/live/tv/android/Api'
       protect_all:
@@ -26,11 +26,10 @@ jobs:
         sudo apt-get install -y \
           python3 python3-pip \
           openjdk-11-jdk \
-          git unzip \
+          git unzip wget \
           clang cmake make \
           lib32z1 \
-          zipalign apksigner \
-          upx-ucl
+          zipalign apksigner
 
     - name: Setup Android NDK r21e
       run: |
@@ -39,6 +38,33 @@ jobs:
         echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
         echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
+    # =======================
+    # Obfuscation Layer (SAFE)
+    # =======================
+    - name: Obfuscate DEX (Pre-Native)
+      run: |
+        if [ ! -f "input.apk" ]; then
+          echo "::error::input.apk NOT FOUND"
+          exit 1
+        fi
+
+        git clone https://github.com/anishathalye/obfuscapk.git
+        cd obfuscapk
+        pip3 install -r requirements.txt
+
+        python3 obfuscapk.py \
+          --skip-resources \
+          --skip-signing \
+          --obfuscate-strings \
+          --obfuscate-control-flow \
+          --rename-classes \
+          ../input.apk
+
+        mv ../input_obfuscated.apk ../stage.apk
+
+    # =======================
+    # Dex2C Setup
+    # =======================
     - name: Setup Dex2C
       run: |
         git clone https://github.com/codehasan/dex2c.git
@@ -49,98 +75,76 @@ jobs:
           https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Prepare Filter for Full Protection
+    # =======================
+    # Filter (SAME INPUT LOGIC)
+    # =======================
+    - name: Prepare Dex2C Filter
       run: |
         cd dex2c
-        echo "=== Setting up filter.txt for maximum protection ==="
-        
-        # توليد الـ whitelist بناءً على الـ inputs
-        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
-        
-        # إضافة الكلاسات اللي دخلتها
+        echo "=== Generating filter.txt ===" > filter.txt
+
         IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
         for CLASS in "${CLASSES[@]}"; do
           echo "$CLASS;.*" >> filter.txt
         done
-        
-        # لو protect_all = yes، أضف whitelist عام
+
         if [ "${{ inputs.protect_all }}" = "yes" ]; then
-          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+          echo ".*;.*" >> filter.txt
         fi
-        
-        # إضافة الـ blacklist الثابت
+
         cat << EOF >> filter.txt
-        
-        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
-        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
-        !.*;<clinit>\(.*\) # استثنِ static initializers
-        !android/.*;.*  # استثنِ Android SDK classes
-        !java/.*;.*     # استثنِ Java standard classes
+        !.*;<init>\(.*\)
+        !.*;<clinit>\(.*\)
+        !android/.*;.*
+        !java/.*;.*
         EOF
-        
-        echo "Filter setup complete:"
+
         cat filter.txt
 
-    - name: Run Dex2C on Full APK
+    # =======================
+    # Dex2C Convert
+    # =======================
+    - name: Run Dex2C
       run: |
-        if [ ! -f "input.apk" ]; then
-          echo "::error::input.apk NOT FOUND"
-          exit 1
-        fi
-
-        cp input.apk dex2c/input.apk
+        cp stage.apk dex2c/input.apk
         cd dex2c
-
-        echo "=== Protecting FULL APK ==="
-
         python3 dcc.py -a input.apk -o protected.apk
 
-        echo "=== Verification ==="
-        if [ -f "protected.apk" ]; then
-          echo "SUCCESS: protected.apk created"
-          ls -lh protected.apk
-        else
-          echo "::error::FAILED: No protected.apk generated"
-          exit 1
-        fi
-
-    - name: Obfuscate Native Libraries
+    # =======================
+    # Native Hardening (SAFE)
+    # =======================
+    - name: Native Hardening
       run: |
         cd dex2c
-        
-        # Generate a debug keystore for signing
-        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
-        
-        mkdir protected_dir
-        unzip protected.apk -d protected_dir
-        
-        NDK_STRIP="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-        
-        for libdir in protected_dir/lib/*; do
-          if [ -d "$libdir" ]; then
-            for so in "$libdir"/*.so; do
-              if [ -f "$so" ]; then
-                echo "Stripping symbols from $so"
-                "$NDK_STRIP" --strip-all "$so"
-                echo "Setting executable permissions on $so"
-                chmod +x "$so"
-                echo "Compressing and obfuscating $so with UPX"
-                upx --best --android-shlib "$so" || { echo "UPX failed for $so, continuing..."; }
-              fi
-            done
-          fi
+        unzip protected.apk -d apkdir
+
+        STRIP="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+
+        for so in apkdir/lib/*/*.so; do
+          [ -f "$so" ] || continue
+          echo "Stripping $so"
+          "$STRIP" --strip-all "$so"
+          chmod 755 "$so"
         done
-        
-        cd protected_dir
-        zip -r ../protected_obfuscated.apk .
+
+        cd apkdir
+        zip -r ../final.apk .
         cd ..
-        
-        zipalign -v -p 4 protected_obfuscated.apk aligned.apk
-        
-        apksigner sign --ks debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android aligned.apk
-        
+
+        keytool -genkey -v -keystore debug.keystore \
+          -alias androiddebugkey \
+          -keyalg RSA -keysize 2048 -validity 10000 \
+          -storepass android -keypass android \
+          -dname "CN=Android,O=Android,C=US"
+
+        zipalign -p 4 final.apk aligned.apk
+        apksigner sign \
+          --ks debug.keystore \
+          --ks-pass pass:android \
+          --key-pass pass:android \
+          aligned.apk
+
         mv aligned.apk protected.apk
-        echo "Obfuscated and protected APK ready"
 
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
