@@ -1,16 +1,16 @@
-name: Dex2C Protect Full APK
+name: Dex2C Protect Full APK (Safe Hardening)
 
 on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
+        description: 'Classes to protect (comma-separated)'
         required: true
         default: 'com/fan/live/tv/android/Api'
       protect_all:
         description: 'Protect all classes? (yes/no)'
         required: false
-        default: 'yes'
+        default: 'no'
 
 jobs:
   build:
@@ -48,39 +48,36 @@ jobs:
           https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Prepare Filter for Full Protection
+    - name: Prepare Safe Filter
       run: |
         cd dex2c
-        echo "=== Setting up filter.txt for maximum protection ==="
-        
-        # توليد الـ whitelist بناءً على الـ inputs
-        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
-        
-        # إضافة الكلاسات اللي دخلتها
+        echo "=== Creating SAFE filter.txt ==="
+
+        echo "# Whitelist (important only)" > filter.txt
+
         IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
         for CLASS in "${CLASSES[@]}"; do
           echo "$CLASS;.*" >> filter.txt
         done
-        
-        # لو protect_all = yes، أضف whitelist عام
+
         if [ "${{ inputs.protect_all }}" = "yes" ]; then
-          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+          echo ".*;.*" >> filter.txt
         fi
-        
-        # إضافة الـ blacklist الثابت
+
         cat << EOF >> filter.txt
-        
-        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
-        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
-        !.*;<clinit>\(.*\) # استثنِ static initializers
-        !android/.*;.*  # استثنِ Android SDK classes
-        !java/.*;.*     # استثنِ Java standard classes
+
+        # Blacklist (VERY IMPORTANT to avoid crashes)
+        !.*;<init>\(.*\)
+        !.*;<clinit>\(.*\)
+        !android/.*;.*
+        !androidx/.*;.*
+        !java/.*;.*
+        !kotlin/.*;.*
         EOF
-        
-        echo "Filter setup complete:"
+
         cat filter.txt
 
-    - name: Run Dex2C on Full APK
+    - name: Run Dex2C
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
@@ -90,21 +87,42 @@ jobs:
         cp input.apk dex2c/input.apk
         cd dex2c
 
-        echo "=== Protecting FULL APK ==="
-
         python3 dcc.py -a input.apk -o protected.apk
 
-        echo "=== Verification ==="
-        if [ -f "protected.apk" ]; then
-          echo "SUCCESS: protected.apk created"
-          ls -lh protected.apk
-        else
-          echo "::error::FAILED: No protected.apk generated"
-          exit 1
-        fi
+    - name: Strip Native Libraries (IMPORTANT)
+      run: |
+        cd dex2c
+        echo "=== Stripping native symbols ==="
+        find . -name "*.so" -type f -exec strip --strip-unneeded {} \; || true
+
+    - name: Zipalign APK
+      run: |
+        cd dex2c
+        zipalign -f 4 protected.apk aligned.apk
+
+    - name: Sign APK (Debug Key)
+      run: |
+        cd dex2c
+        keytool -genkey -v \
+          -keystore debug.keystore \
+          -storepass android \
+          -alias androiddebugkey \
+          -keypass android \
+          -dname "CN=Android,O=Android,C=US" \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000
+
+        apksigner sign \
+          --ks debug.keystore \
+          --ks-pass pass:android \
+          --key-pass pass:android \
+          aligned.apk
+
+        mv aligned.apk final-protected.apk
 
     - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
         name: protected-apk
-        path: dex2c/protected.apk
+        path: dex2c/final-protected.apk
