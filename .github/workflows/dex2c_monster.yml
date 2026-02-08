@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       classes:
-        description: 'Classes to protect (comma-separated, ex: com/fan/live/tv/android/Api)'
+        description: 'Classes to protect (comma-separated)'
         required: true
         default: 'com/fan/live/tv/android/Api'
 
@@ -40,7 +40,7 @@ jobs:
         pip3 install -r requirements.txt
         sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-    - name: Prepare Filter (SAFE)
+    - name: Prepare Filter
       run: |
         cd dex2c
         echo "Generating filter.txt"
@@ -50,14 +50,12 @@ jobs:
           echo "$CLASS;.*" >> filter.txt
         done
 
-        echo "!.*;<init>\\(.*\\)" >> filter.txt
-        echo "!.*;<clinit>\\(.*\\)" >> filter.txt
         echo "!android/.*" >> filter.txt
         echo "!androidx/.*" >> filter.txt
         echo "!java/.*" >> filter.txt
         echo "!kotlin/.*" >> filter.txt
 
-        echo "==== FILTER CONTENT ===="
+        echo "==== FILTER ===="
         cat filter.txt
 
     - name: Run Dex2C
