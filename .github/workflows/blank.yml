@@ -26,7 +26,7 @@ jobs:
         sudo apt-get install -y \
           python3 python3-pip \
           openjdk-11-jdk \
-          git unzip wget \
+          unzip wget \
           clang cmake make \
           lib32z1 \
           zipalign apksigner
@@ -39,17 +39,20 @@ jobs:
         echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
     # =======================
-    # SAFE DEX OBFUSCATION
+    # SAFE DEX OBFUSCATION (NO GIT CLONE)
     # =======================
-    - name: Safe DEX Obfuscation (Pre-Native)
+    - name: Safe DEX Obfuscation
       run: |
         if [ ! -f "input.apk" ]; then
           echo "::error::input.apk NOT FOUND"
           exit 1
         fi
 
-        git clone https://github.com/teknogeek/apkfuscator.git
-        cd apkfuscator
+        echo "Downloading APKfuscator (ZIP)"
+        wget -q https://github.com/teknogeek/apkfuscator/archive/refs/heads/master.zip -O apkfuscator.zip
+        unzip -q apkfuscator.zip
+        cd apkfuscator-master
+
         pip3 install -r requirements.txt
 
         python3 apkfuscator.py \
@@ -69,7 +72,10 @@ jobs:
     # =======================
     - name: Setup Dex2C
       run: |
-        git clone https://github.com/codehasan/dex2c.git
+        wget -q https://github.com/codehasan/dex2c/archive/refs/heads/master.zip -O dex2c.zip
+        unzip -q dex2c.zip
+        mv dex2c-master dex2c
+
         cd dex2c
         pip3 install -r requirements.txt
         mkdir -p tools
@@ -101,7 +107,6 @@ jobs:
         !java/.*;.*
         EOF
 
-        echo "==== filter.txt ===="
         cat filter.txt
 
     # =======================
@@ -119,7 +124,7 @@ jobs:
         fi
 
     # =======================
-    # NATIVE HARDENING
+    # NATIVE HARDENING + SIGN
     # =======================
     - name: Native Hardening & Sign
       run: |
