@@ -1,0 +1,59 @@
+name: DEX Protector AI
+
+on:
+  workflow_dispatch: # يسمح لك بتشغيل الأداة يدوياً
+  push:
+    paths:
+      - 'input.apk' # تعمل تلقائياً إذا رفعت ملف جديد
+
+jobs:
+  protect-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: ☕ Setup Java (Required for Apktool/Signer)
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: ⚙️ Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zipalign apksigner
+
+      - name: 🛠️ Setup Tools Environment
+        run: |
+          mkdir -p tools
+          # تحميل Apktool (النسخة المستقرة)
+          wget -q -O tools/apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
+          # تأكد من وجود ملف بايثون
+          if [ ! -f builder.py ]; then
+            echo "builder.py not found! Ensure you pushed the python code."
+            exit 1
+          fi
+
+      - name: 🛡️ Run Protection Tool
+        run: |
+          # تأكد من وجود input.apk
+          if [ ! -f input.apk ]; then
+            echo "::error::ملف input.apk غير موجود!"
+            exit 1
+          fi
+          
+          # تشغيل سكريبت الحماية الذي كتبناه
+          python3 builder.py
+
+      - name: 📤 Upload Protected APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Protected-APP
+          path: protected.apk
