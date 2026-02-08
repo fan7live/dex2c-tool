@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  RTMP_BASE: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app
-  STREAM_KEY: sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
+  RTMP_FULL: rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/sk_us-west-2_nU83ZTW6D6Tu_wFPkEaWWRcqhLm7inTHXfkGv4SrMy9
   M3U8_URL: http://affinderot.org:8080/bn1hevc/index.m3u8
   LOGO_URL: https://image.fanlive.org//upload/bein_sports_1.png
 
@@ -15,7 +14,7 @@ jobs:
     timeout-minutes: 0
 
     steps:
-      - name: Install FFmpeg stable build
+      - name: Install FFmpeg (BtbN build)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y wget tar xz-utils
@@ -27,10 +26,10 @@ jobs:
           rm -rf ffmpeg*
           ffmpeg -version | head -n 3
 
-      - name: Download logo PNG with alpha
+      - name: Download logo
         run: wget -O /tmp/logo.png "${{ env.LOGO_URL }}"
 
-      - name: Run FFmpeg relay
+      - name: Start relay with FFmpeg
         run: |
           ffmpeg -loglevel info \
             -re -stream_loop -1 \
@@ -44,10 +43,11 @@ jobs:
             -f flv -flvflags no_duration_filesize \
             -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 15 \
             -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx \
-            "\( {{ env.RTMP_BASE }}/ \){{ env.STREAM_KEY }}"
+            "${{ env.RTMP_FULL }}"
 
       # -------------------------------
-      # الـ URL الآن مكتوب بشكل نظيف تمامًا بدون مسافات زائدة أو أقواس
-      # المتوقع في اللوج: Opening 'rtmps://fa723fc1b171.../app/sk_us-west-2_...'
-      # لو ظهر "No such file" تاني → معناه مشكلة في GitHub Actions parsing → جرب تضيف الـ URL كامل في الـ env كـ RTMP_FULL_URL
+      # الـ URL كامل في env واحد (من وثائق Kick الرسمية: :443/app + key مباشرة)
+      # ما فيش أي concatenation → ما فيش خطأ interpolation
+      # لو نجح → اللوج رح يظهر "Opening 'rtmps://fa723fc1b171...:443/app/sk_...'"
+      # لو ظهر "Connection refused" أو "Failed to connect" → معناه المفتاح غير صالح حاليًا (reset من Kick dashboard)
       # -------------------------------
