@@ -1,4 +1,4 @@
-name: Ultimate Light Stream (Direct Copy)
+name: Copy Stream - Diagnostic Mode
 
 on:
   workflow_dispatch:
@@ -8,30 +8,33 @@ env:
   M3U8_URL: http://mac12546.cdngold.me/live/7e93f942fd00/a1d06bbaed/544451.m3u8
 
 jobs:
-  copy_stream:
+  copy_stream_test:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 ساعات
+    timeout-minutes: 360
 
     steps:
       - name: Install FFmpeg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y wget xz-utils
+          sudo apt-get install -y wget
           wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
           tar xf ffmpeg-master-latest-linux64-gpl.tar.xz
           sudo mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg
-          sudo chmod +x /usr/local/bin/ffmpeg
-          rm -rf ffmpeg*
+          chmod +x /usr/local/bin/ffmpeg
 
-      - name: Start Direct Copy Stream
+      - name: Start Copy Stream (With Logs)
         run: |
-          # الخفة القصوى (1% CPU Load)
-          # -c copy: ينسخ البيانات كما هي تماماً
-          # -bsf:a aac_adtstoasc: ضروري جداً عند نقل الصوت من TS إلى FLV لمنع الاخطاء
+          # التغييرات الهامة:
+          # 1. loglevel info: سيظهر لك التفاصيل (سرعة البث، التنسيق، هل بدأ ام لا)
+          # 2. user_agent: للتحايل على حماية سيرفر IPTV
+          # 3. c:v copy + c:a aac: أحياناً الفيديو يقبل النسخ لكن الصوت لا، هذا أضمن إعداد خفيف
           
-          ffmpeg -hide_banner -loglevel error \
+          ffmpeg -hide_banner -loglevel info \
+            -user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+            -headers "Referer: http://mac12546.cdngold.me/" \
             -reconnect 1 -reconnect_streamed 1 -reconnect_at_eof 1 -reconnect_delay_max 5 \
+            -rw_timeout 15000000 \
             -i "${{ env.M3U8_URL }}" \
-            -c copy \
-            -bsf:a aac_adtstoasc \
+            -c:v copy \
+            -c:a aac -b:a 128k -ar 44100 \
             -f flv "${{ env.RTMP_FULL }}"
