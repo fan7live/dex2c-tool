@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -7,129 +6,93 @@ import glob
 import random
 import string
 
-# إعدادات الحماية
-PROTECTION_LEVEL_STRIP_DEBUG = True  # حذف معلومات التنقيح
-PROTECTION_LEVEL_JUNK_CODE = True    # إضافة كود وهمي
+# ================= إعدادات =================
 INPUT_APK = "input.apk"
 OUTPUT_APK = "protected.apk"
 TEMP_DIR = "apk_temp"
+TOOLS_DIR = "tools"
+APKTOOL_PATH = os.path.join(TOOLS_DIR, "apktool.jar")
+KEYSTORE_PATH = os.path.join(TOOLS_DIR, "signer.keystore")
+# ==========================================
 
 def run_command(command):
-    """تشغيل الأوامر النظامية والتأكد من نجاحها"""
     try:
+        print(f"[*] تشغيل: {command}")
         subprocess.check_call(command, shell=True)
-    except subprocess.CalledProcessError as e:
-        print(f"❌ خطأ أثناء تنفيذ: {command}")
+    except subprocess.CalledProcessError:
+        print(f"❌ خطأ فادح أثناء تنفيذ: {command}")
         sys.exit(1)
 
-def generate_junk_method():
-    """توليد كود smali لدالة وهمية عشوائية لا تفعل شيئًا خطيرًا"""
-    method_name = ''.join(random.choices(string.ascii_lowercase, k=10))
-    # هذه دالة بسيطة تحسب عمليات حسابية ولا تستخدم ناتجها
-    # هذا يربك المحلل ويغير هيكل الملف
-    smali_code = f"""
-.method private {method_name}()V
+def protect_smali(file_path):
+    """ إخفاء معلومات التصحيح وحقن كود وهمي """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        is_class = False
+
+        for line in lines:
+            stripped = line.strip()
+            
+            # 1. حذف معلومات المبرمج (Debugging Info)
+            if stripped.startswith(('.line', '.local', '.source', '.param')):
+                continue
+
+            if stripped.startswith('.class'):
+                is_class = True
+            
+            new_lines.append(line)
+
+        # 2. حقن دالة وهمية في النهاية لتغيير بصمة الملف
+        if is_class and len(new_lines) > 2:
+            junk_name = ''.join(random.choices(string.ascii_letters, k=8))
+            junk_method = f"""
+.method private static {junk_name}()V
     .locals 2
     const/4 v0, 0x1
     const/4 v1, 0x2
-    add-int v0, v0, v1
+    add-int/2addr v0, v1
     return-void
 .end method
 """
-    return smali_code
-
-def protect_smali_file(file_path):
-    """تطبيق الحماية على ملف Smali واحد"""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-
-    new_lines = []
-    class_name_found = False
-    
-    for line in lines:
-        stripped_line = line.strip()
+            # نبحث عن السطر قبل الأخير (.end class) ونحقن قبله
+            for i in range(len(new_lines)-1, -1, -1):
+                if new_lines[i].strip() == '.end class':
+                    new_lines.insert(i, junk_method)
+                    break
         
-        # 1. الحماية: حذف معلومات التصحيح (Debug Info)
-        # نحذف الأسطر التي تبدأ بـ .line أو .local أو .source
-        if PROTECTION_LEVEL_STRIP_DEBUG:
-            if stripped_line.startswith(".line") or \
-               stripped_line.startswith(".local") or \
-               stripped_line.startswith(".source") or \
-               stripped_line.startswith(".param"):
-                continue
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write("".join(new_lines))
 
-        # تسجيل مكان بداية الكلاس لحقن الكود الوهمي لاحقًا
-        if stripped_line.startswith(".class"):
-            class_name_found = True
-
-        new_lines.append(line)
-
-        # 2. الحماية: حقن دالة وهمية في نهاية الملف (قبل .end descriptor المباشر لا يجوز، الأفضل بعد بداية الكلاس مباشرة أو قبل النهاية)
-        # للتسهيل والاستقرار، سنضيفها قبل نهاية الملف
-    
-    # تحضير المحتوى للكتابة
-    final_content = "".join(new_lines)
-    
-    # حقن Junk Method قبل آخر سطر (الذي يكون عادة .end descriptor محذوف أو موجود)
-    # للأسلوب الأكثر أمانًا، نبحث عن آخر سطر ونضع قبله
-    if PROTECTION_LEVEL_JUNK_CODE and class_name_found:
-        # البحث عن .end class لغلق الملف
-        if final_content.strip().endswith(".end class"):
-             junk = generate_junk_method()
-             final_content = final_content.replace(".end class", f"{junk}\n.end class")
-
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(final_content)
+    except Exception as e:
+        print(f"⚠️ تجاوز ملف بسبب خطأ: {file_path} -> {e}")
 
 def main():
-    print("🚀 بدء نظام الحماية (حصن DEX)...")
-    
-    # 1. التفكيك (Decompilation)
-    print("📦 جاري تفكيك APK...")
     if os.path.exists(TEMP_DIR):
         shutil.rmtree(TEMP_DIR)
-    
-    # نستخدم apktool لتفكيك الملف
-    run_command(f"java -jar tools/apktool.jar d {INPUT_APK} -o {TEMP_DIR} -f")
+        
+    print(">>> [1/5] جاري التفكيك (Decompile)...")
+    run_command(f"java -jar {APKTOOL_PATH} d {INPUT_APK} -o {TEMP_DIR} -f")
 
-    # 2. تطبيق الحماية (Applying Protection)
-    print("🛡️ جاري تشفير وحماية ملفات DEX/Smali...")
-    smali_files = glob.glob(f"{TEMP_DIR}/smali*/**/*.smali", recursive=True)
+    print(">>> [2/5] جاري الحماية (Protecting Smali)...")
+    smali_files = glob.glob(f"{TEMP_DIR}/**/*.smali", recursive=True)
     
-    count = 0
-    for smali_file in smali_files:
-        # نستبعد مكتبات النظام الأساسية لتسريع العملية وتجنب الأخطاء
-        if "android/support" in smali_file or "androidx" in smali_file:
+    for smali in smali_files:
+        # لا تحمِ ملفات النظام لكي لا ينهار التطبيق
+        if "androidx" in smali or "android/support" in smali or "google" in smali:
             continue
-            
-        protect_smali_file(smali_file)
-        count += 1
-    
-    print(f"✅ تمت حماية {count} ملف بنجاح.")
+        protect_smali(smali)
 
-    # 3. إعادة البناء (Rebuilding)
-    print("🔨 جاري إعادة بناء APK...")
-    run_command(f"java -jar tools/apktool.jar b {TEMP_DIR} -o unaligned.apk")
+    print(">>> [3/5] إعادة البناء (Build)...")
+    run_command(f"java -jar {APKTOOL_PATH} b {TEMP_DIR} -o unaligned.apk")
 
-    # 4. التوقيع والتحسين (Align & Sign)
-    # Zipalign مهم لاستقرار الرام في أندرويد
-    print("⚖️ جاري تحسين المحاذاة (Zipalign)...")
+    print(">>> [4/5] تحسين (Zipalign)...")
     run_command("zipalign -p -f -v 4 unaligned.apk aligned.apk")
 
-    # التوقيع بمفتاح تصحيح مؤقت (Debug Key) بما أننا في بيئة تلقائية
-    print("✍️ جاري توقيع التطبيق...")
-    # إنشاء مفتاح مؤقت إذا لم يوجد
-    if not os.path.exists("tools/signer.keystore"):
-        run_command('keytool -genkey -v -keystore tools/signer.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"')
+    print(">>> [5/5] التوقيع (Sign)...")
+    if not os.path.exists(KEYSTORE_PATH):
+        cmd = f'keytool -genkey -v -keystore {KEYSTORE_PATH} -alias test -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Test,O=Test,C=US"'
+        run_command(cmd)
 
-    run_command(f"apksigner sign --ks tools/signer.keystore --ks-pass pass:android --key-pass pass:android --out {OUTPUT_APK} aligned.apk")
-
-    # تنظيف
-    if os.path.exists("unaligned.apk"): os.remove("unaligned.apk")
-    if os.path.exists("aligned.apk"): os.remove("aligned.apk")
-    if os.path.exists(TEMP_DIR): shutil.rmtree(TEMP_DIR)
-
-    print(f"🎉 تم الانتهاء! الملف المحمي جاهز: {OUTPUT_APK}")
-
-if __name__ == "__main__":
-    main()
+    run_command(f"
