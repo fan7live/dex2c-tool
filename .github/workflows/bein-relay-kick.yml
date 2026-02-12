@@ -1,85 +1,110 @@
-name: Encrypt APK Dex
+name: Dex2C Protect Full APK
 
 on:
-  push:
-    paths:
-      - input.apk
   workflow_dispatch:
+    inputs:
+      classes:
+        description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
+        required: true
+        default: 'com/fan/live/tv/android/Api'
+      protect_all:
+        description: 'Protect all classes? (yes/no)'
+        required: false
+        default: 'yes'
 
 jobs:
-  encrypt-dex:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    - name: Checkout Repo
+      uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.x
-
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
-        pip install zipfile36
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3 python3-pip \
+          openjdk-11-jdk \
+          git unzip \
+          clang cmake make \
+          lib32z1 \
+          zipalign apksigner
 
-    - name: Encrypt classes.dex
+    - name: Setup Android NDK r21e
       run: |
-        python3 << 'EOF'
-        import zipfile
-        import os
+        wget -q https://dl.google.com/android/repository/android-ndk-r21e-linux-x86_64.zip
+        unzip -q android-ndk-r21e-linux-x86_64.zip
+        echo "NDK_ROOT=$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
+        echo "PATH=$PATH:$GITHUB_WORKSPACE/android-ndk-r21e" >> $GITHUB_ENV
 
-        input_apk = "input.apk"
-        output_apk = "output_encrypted.apk"
-        temp_dir = "temp_apk"
+    - name: Setup Dex2C
+      run: |
+        git clone https://github.com/codehasan/dex2c.git
+        cd dex2c
+        pip3 install -r requirements.txt
+        mkdir -p tools
+        wget -q -O tools/apktool.jar \
+          https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar
+        sed -i "s|ndk_dir = .*|ndk_dir = $GITHUB_WORKSPACE/android-ndk-r21e|" dcc.cfg
 
-        # تأكد من مسح أي مجلد مؤقت قديم
-        if os.path.exists(temp_dir):
-            import shutil
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir)
-
-        # استخراج محتوى APK
-        with zipfile.ZipFile(input_apk, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
-
-        # اقرأ Package Name من AndroidManifest.xml
-        import xml.etree.ElementTree as ET
-        manifest_path = os.path.join(temp_dir, "AndroidManifest.xml")
-        tree = ET.parse(manifest_path)
-        root = tree.getroot()
-        package_name = root.attrib.get("package", "defaultpkg")
-
-        # XOR function
-        def xor_encode(data, key):
-            key_bytes = key.encode()
-            return bytes([b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(data)])
-
-        # تشفير كل dex
-        for fname in os.listdir(temp_dir):
-            if fname.startswith("classes") and fname.endswith(".dex"):
-                dex_path = os.path.join(temp_dir, fname)
-                with open(dex_path, "rb") as f:
-                    data = f.read()
-                enc_data = xor_encode(data, package_name)
-                new_name = fname.replace("classes", "ijiami").replace(".dex", ".dat")
-                out_path = os.path.join(temp_dir, new_name)
-                with open(out_path, "wb") as f:
-                    f.write(enc_data)
-                os.remove(dex_path)  # احذف الملف الأصلي
-
-        # إعادة بناء APK
-        with zipfile.ZipFile(output_apk, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root_dir, dirs, files in os.walk(temp_dir):
-                for file in files:
-                    abs_path = os.path.join(root_dir, file)
-                    rel_path = os.path.relpath(abs_path, temp_dir)
-                    zipf.write(abs_path, rel_path)
-        print("Encrypted APK created:", output_apk)
+    - name: Prepare Filter for Full Protection
+      run: |
+        cd dex2c
+        echo "=== Setting up filter.txt for maximum protection ==="
+        
+        # توليد الـ whitelist بناءً على الـ inputs
+        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
+        
+        # إضافة الكلاسات اللي دخلتها
+        IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
+        for CLASS in "${CLASSES[@]}"; do
+          echo "$CLASS;.*" >> filter.txt
+        done
+        
+        # لو protect_all = yes، أضف whitelist عام
+        if [ "${{ inputs.protect_all }}" = "yes" ]; then
+          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+        fi
+        
+        # إضافة الـ blacklist الثابت
+        cat << EOF >> filter.txt
+        
+        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
+        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
+        !.*;<clinit>\(.*\) # استثنِ static initializers
+        !android/.*;.*  # استثنِ Android SDK classes
+        !java/.*;.*     # استثنِ Java standard classes
         EOF
+        
+        echo "Filter setup complete:"
+        cat filter.txt
 
-    - name: Upload encrypted APK
+    - name: Run Dex2C on Full APK
+      run: |
+        if [ ! -f "input.apk" ]; then
+          echo "::error::input.apk NOT FOUND"
+          exit 1
+        fi
+
+        cp input.apk dex2c/input.apk
+        cd dex2c
+
+        echo "=== Protecting FULL APK ==="
+
+        python3 dcc.py -a input.apk -o protected.apk
+
+        echo "=== Verification ==="
+        if [ -f "protected.apk" ]; then
+          echo "SUCCESS: protected.apk created"
+          ls -lh protected.apk
+        else
+          echo "::error::FAILED: No protected.apk generated"
+          exit 1
+        fi
+
+    - name: Upload Protected APK
       uses: actions/upload-artifact@v4
       with:
-        name: output_encrypted.apk
-        path: output_encrypted.apk
+        name: protected-apk
+        path: dex2c/protected.apk
