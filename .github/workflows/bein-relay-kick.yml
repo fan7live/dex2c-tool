@@ -3,10 +3,15 @@ name: Dex2C Protect Full APK
 on:
   workflow_dispatch:
     inputs:
+      apk_url:
+        description: 'Direct APK URL (https://...)'
+        required: true
+
       classes:
         description: 'Enter classes to protect (comma-separated, e.g., com/fan/live/tv/android/Api,com/other/Class)'
         required: true
         default: 'com/fan/live/tv/android/Api'
+
       protect_all:
         description: 'Protect all classes? (yes/no)'
         required: false
@@ -29,7 +34,8 @@ jobs:
           git unzip \
           clang cmake make \
           lib32z1 \
-          zipalign apksigner
+          zipalign apksigner \
+          wget
 
     - name: Setup Android NDK r21e
       run: |
@@ -53,45 +59,44 @@ jobs:
         cd dex2c
         echo "=== Setting up filter.txt for maximum protection ==="
         
-        # توليد الـ whitelist بناءً على الـ inputs
-        echo "com/fan/live/tv/android/Api;.*  # حماية كل الـ methods في الكلاس ده (أولوية عالية)" > filter.txt
+        echo "com/fan/live/tv/android/Api;.*" > filter.txt
         
-        # إضافة الكلاسات اللي دخلتها
         IFS=',' read -ra CLASSES <<< "${{ inputs.classes }}"
         for CLASS in "${CLASSES[@]}"; do
           echo "$CLASS;.*" >> filter.txt
         done
         
-        # لو protect_all = yes، أضف whitelist عام
         if [ "${{ inputs.protect_all }}" = "yes" ]; then
-          echo ".*;.*  # حماية الكل الآخر (whitelist عام)" >> filter.txt
+          echo ".*;.*" >> filter.txt
         fi
         
-        # إضافة الـ blacklist الثابت
         cat << EOF >> filter.txt
-        
-        # Blacklist للاستثناءات (لو طلع أخطاء في log، أضف هنا)
-        !.*;<init>\(.*\)  # استثنِ constructors مع الـ signature
-        !.*;<clinit>\(.*\) # استثنِ static initializers
-        !android/.*;.*  # استثنِ Android SDK classes
-        !java/.*;.*     # استثنِ Java standard classes
+        !.*;<init>\(.*\)
+        !.*;<clinit>\(.*\)
+        !android/.*;.*
+        !java/.*;.*
         EOF
         
-        echo "Filter setup complete:"
         cat filter.txt
+
+    - name: Download APK From URL
+      run: |
+        echo "=== Downloading APK ==="
+        wget -O input.apk "${{ inputs.apk_url }}"
+        
+        if [ ! -f "input.apk" ]; then
+          echo "::error::Failed to download APK"
+          exit 1
+        fi
+        
+        ls -lh input.apk
 
     - name: Run Dex2C on Full APK
       run: |
-        if [ ! -f "input.apk" ]; then
-          echo "::error::input.apk NOT FOUND"
-          exit 1
-        fi
-
         cp input.apk dex2c/input.apk
         cd dex2c
 
         echo "=== Protecting FULL APK ==="
-
         python3 dcc.py -a input.apk -o protected.apk
 
         echo "=== Verification ==="
