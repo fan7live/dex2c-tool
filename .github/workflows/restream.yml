@@ -1,0 +1,121 @@
+name: 🔴 RTMP Restream (Copy Mode)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mpd_url:
+        description: 'MPD URL (اتركه فارغاً لاستخدام Secret)'
+        required: false
+        default: ''
+      rtmp_url:
+        description: 'RTMP URL (اتركه فارغاً لاستخدام Secret)'
+        required: false
+        default: ''
+      stream_key:
+        description: 'Stream Key (اتركه فارغاً لاستخدام Secret)'
+        required: false
+        default: ''
+
+jobs:
+  restream:
+    name: 📡 Live Restream
+    runs-on: ubuntu-latest
+    timeout-minutes: 355  # أقل من حد الـ 6 ساعات بـ 5 دقائق
+
+    steps:
+
+      # ──────────────────────────────────────────────
+      # 1. تحضير FFmpeg أحدث إصدار
+      # ──────────────────────────────────────────────
+      - name: 📦 Install Latest FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+
+      # ──────────────────────────────────────────────
+      # 2. تجهيز المتغيرات
+      # ──────────────────────────────────────────────
+      - name: ⚙️ Setup Variables
+        id: vars
+        run: |
+          # استخدام Input إذا موجود وإلا Secret
+          MPD="${{ github.event.inputs.mpd_url }}"
+          RTMP="${{ github.event.inputs.rtmp_url }}"
+          KEY="${{ github.event.inputs.stream_key }}"
+
+          [ -z "$MPD" ]  && MPD="${{ secrets.MPD_URL }}"
+          [ -z "$RTMP" ] && RTMP="${{ secrets.RTMP_URL }}"
+          [ -z "$KEY" ]  && KEY="${{ secrets.STREAM_KEY }}"
+
+          echo "MPD=$MPD"   >> $GITHUB_ENV
+          echo "RTMP=$RTMP" >> $GITHUB_ENV
+          echo "KEY=$KEY"   >> $GITHUB_ENV
+
+          echo "✅ Variables ready"
+          echo "📺 MPD: $MPD"
+          echo "📡 RTMP: $RTMP/****"
+
+      # ──────────────────────────────────────────────
+      # 3. بدء البث مع Loop لإعادة الاتصال التلقائي
+      # ──────────────────────────────────────────────
+      - name: 🔴 Start Restream Loop
+        run: |
+          RTMP_FULL="${RTMP}/${KEY}"
+          RETRY=0
+          MAX_RETRIES=999
+          RETRY_DELAY=2
+
+          echo "═══════════════════════════════════════"
+          echo "🚀 Starting restream in COPY mode"
+          echo "📺 Source: ${MPD}"
+          echo "📡 Destination: ${RTMP}/****"
+          echo "═══════════════════════════════════════"
+
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+
+            RETRY=$((RETRY + 1))
+            echo ""
+            echo "▶ [Attempt #${RETRY}] $(date '+%H:%M:%S') - Starting stream..."
+
+            ffmpeg \
+              -hide_banner \
+              -loglevel warning \
+              \
+              `# ─── INPUT FLAGS ────────────────────────` \
+              -fflags +genpts+discardcorrupt \
+              -err_detect ignore_err \
+              -reconnect 1 \
+              -reconnect_streamed 1 \
+              -reconnect_delay_max 5 \
+              -reconnect_on_network_error 1 \
+              -multiple_requests 1 \
+              -timeout 15000000 \
+              -rw_timeout 15000000 \
+              -analyzeduration 3000000 \
+              -probesize 5000000 \
+              \
+              -i "${MPD}" \
+              \
+              `# ─── COPY MODE (no re-encoding) ─────────` \
+              -c copy \
+              -copyts \
+              -start_at_zero \
+              \
+              `# ─── OUTPUT FLAGS ───────────────────────` \
+              -f flv \
+              -flvflags no_duration_filesize \
+              -drop_pkts_on_overflow 1 \
+              -bufsize 8192k \
+              \
+              "${RTMP_FULL}"
+
+            EXIT_CODE=$?
+            echo "⚠️  FFmpeg exited with code: $EXIT_CODE at $(date '+%H:%M:%S')"
+            echo "🔄 Reconnecting in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+
+          done
+
+          echo "❌ Max retries reached"
+          exit 1
