@@ -1,0 +1,24 @@
+name: 🐕 Restream Watchdog (Auto-Restart)
+
+on:
+  schedule:
+    # كل 5 ساعات و 45 دقيقة (قبل انتهاء الـ workflow الأول)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-restream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔄 Trigger Restream Workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'restream.yml',
+              ref: 'main'
+            });
+            console.log('✅ Restream workflow triggered successfully');
